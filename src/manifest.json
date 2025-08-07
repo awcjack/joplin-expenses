@@ -1,0 +1,16 @@
+{
+	"manifest_version": 1,
+	"id": "UUID",
+	"app_min_version": "3.3",
+	"version": "1.0.0",
+	"name": "money-tracker",
+	"description": "tracking expenses and incomes",
+	"author": "awcjack",
+	"homepage_url": "",
+	"repository_url": "https://github.com/awcjack/joplin-money-tracker",
+	"keywords": [],
+	"categories": [],
+	"screenshots": [],
+	"icons": {},
+	"promo_tile": {}
+}
