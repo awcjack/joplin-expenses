@@ -146,7 +146,7 @@ export class FolderService {
     /**
      * Ensure a specific monthly document exists
      */
-    private async ensureMonthlyDocumentExists(yearFolderId: string, year: string, month: string): Promise<string> {
+    async ensureMonthlyDocumentExists(yearFolderId: string, year: string, month: string): Promise<string> {
         const noteTitle = month; // e.g., "01", "02", etc.
         
         try {

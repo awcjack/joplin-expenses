@@ -55,6 +55,33 @@ export interface ExpenseProcessingResult {
 
 export type RecurrenceType = 'daily' | 'weekly' | 'monthly' | 'yearly' | '';
 
+// MoneyWallet CSV import types
+export interface MoneyWalletCSVRow {
+    wallet: string;           // wallet name (will map to shop field)
+    currency: string;         // ISO currency code
+    category: string;         // category name
+    datetime: string;         // YYYY-MM-DD HH:mm:ss format
+    money: string;           // transaction amount as string
+    description: string;      // transaction description
+    event?: string;          // optional event name
+    people?: string;         // optional people names (comma-separated)
+}
+
+export interface CSVImportResult {
+    success: boolean;
+    imported: number;
+    failed: number;
+    errors: string[];
+    warnings: string[];
+}
+
+export interface CSVValidationResult {
+    valid: boolean;
+    errors: string[];
+    rowCount: number;
+    hasOptionalColumns: boolean;
+}
+
 // Default plugin settings
 export const DEFAULT_SETTINGS: PluginSettings = {
     categories: [

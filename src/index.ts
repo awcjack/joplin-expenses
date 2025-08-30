@@ -5,6 +5,7 @@ import { FolderService } from './services/FolderService';
 import { ExpenseService } from './services/ExpenseService';
 import { SummaryService } from './services/SummaryService';
 import { TableEditorService } from './services/TableEditorService';
+import { CSVImportService } from './services/CSVImportService';
 import { RecurringExpenseHandler } from './recurringHandler';
 import { createNewExpenseEntry } from './expenseParser';
 import { getCurrentDateTime } from './utils/dateUtils';
@@ -16,6 +17,7 @@ let folderService: FolderService;
 let expenseService: ExpenseService;
 let summaryService: SummaryService;
 let tableEditorService: TableEditorService;
+let csvImportService: CSVImportService;
 let recurringHandler: RecurringExpenseHandler;
 
 joplin.plugins.register({
@@ -29,6 +31,7 @@ joplin.plugins.register({
 			expenseService = ExpenseService.getInstance();
 			summaryService = SummaryService.getInstance();
 			tableEditorService = TableEditorService.getInstance();
+			csvImportService = CSVImportService.getInstance();
 			recurringHandler = RecurringExpenseHandler.getInstance();
 			
 			// Initialize settings first
@@ -151,6 +154,15 @@ async function registerCommands() {
 			await openRecurringExpensesDocumentCommand();
 		},
 	});
+
+	// Import MoneyWallet CSV command
+	await joplin.commands.register({
+		name: 'importMoneyWalletCSV',
+		label: 'Import MoneyWallet CSV',
+		execute: async () => {
+			await importMoneyWalletCSVCommand();
+		},
+	});
 }
 
 /**
@@ -168,6 +180,9 @@ async function registerMenuItems() {
 	// Settings and maintenance
 	await joplin.views.menuItems.create('manageCategoriesMenu', 'manageCategories', MenuItemLocation.Tools);
 	await joplin.views.menuItems.create('initializeFolderMenu', 'initializeFolderStructure', MenuItemLocation.Tools);
+	
+	// Import/Export
+	await joplin.views.menuItems.create('importMoneyWalletCSVMenu', 'importMoneyWalletCSV', MenuItemLocation.Tools);
 	
 	// Recurring expenses
 	await joplin.views.menuItems.create('processRecurringMenu', 'processRecurringExpenses', MenuItemLocation.Tools);
@@ -674,3 +689,267 @@ async function countExpensesInContent(content: string): Promise<number> {
 		return 0;
 	}
 }
+
+/**
+ * Import MoneyWallet CSV command implementation
+ */
+async function importMoneyWalletCSVCommand() {
+	let dialogId: string | null = null;
+	
+	try {
+		// Create file selection dialog with unique ID to avoid conflicts
+		const timestamp = Date.now();
+		dialogId = await joplin.views.dialogs.create(`csv-import-dialog-${timestamp}`);
+		
+		const formHtml = `
+			<form id="csv-import-form" style="
+				max-width: 100vw;
+				padding: 10px;
+				box-sizing: border-box;
+			">
+				<h2 style="margin-bottom: 15px; font-size: 1.2em;">Import MoneyWallet CSV</h2>
+				<div style="display: flex; flex-direction: column; gap: 15px;">
+					<div style="display: flex; flex-direction: column;">
+						<label for="csvContent" style="font-weight: bold; margin-bottom: 8px;">Paste CSV Content:</label>
+						<textarea id="csvContent" name="csvContent" required
+								  style="width: 100%; min-height: 200px; padding: 8px; font-size: 14px; 
+										 border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; 
+										 font-family: monospace; resize: vertical;"
+								  placeholder="Paste your MoneyWallet CSV content here...
+
+Example format:
+wallet,currency,category,datetime,money,description,event,people
+Bank account,EUR,food,2020-03-25 16:08:34,45.89,Grocery shopping,Weekly shopping,John"></textarea>
+						<small style="color: #666; margin-top: 4px;">
+							Copy and paste the content of your MoneyWallet CSV export file
+						</small>
+					</div>
+					<div style="display: flex; flex-direction: column;">
+						<label for="importLocation" style="font-weight: bold; margin-bottom: 8px;">Import Location:</label>
+						<select id="importLocation" name="importLocation" 
+								style="width: 100%; padding: 8px; font-size: 16px; border: 1px solid #ccc; 
+									   border-radius: 4px; box-sizing: border-box;">
+							<option value="new-expenses">Add to New-Expenses document (recommended)</option>
+							<option value="direct-to-monthly">Import directly to monthly documents</option>
+						</select>
+						<small style="color: #666; margin-top: 4px;">
+							Choose whether to add to new-expenses for review or import directly to monthly documents
+						</small>
+					</div>
+				</div>
+				<div style="margin-top: 20px; padding: 15px; background-color: #f0f8ff; border-radius: 4px; border: 1px solid #bde0ff;">
+					<h4 style="margin-top: 0; color: #0066cc;">Required CSV Format (MoneyWallet):</h4>
+					<p style="margin: 8px 0; font-family: monospace; font-size: 0.9em;">
+						<strong>Required columns:</strong> wallet, currency, category, datetime, money, description
+					</p>
+					<p style="margin: 8px 0; font-family: monospace; font-size: 0.9em;">
+						<strong>Optional columns:</strong> event, people
+					</p>
+					<p style="margin: 8px 0; font-size: 0.9em;">
+						<strong>Datetime format:</strong> YYYY-MM-DD HH:mm:ss (e.g., "2020-03-25 16:08:34")
+					</p>
+					<p style="margin: 8px 0; font-size: 0.9em;">
+						<strong>Field mapping:</strong> wallet→shop, category→category, money→price, description→description
+					</p>
+				</div>
+			</form>
+		`;
+		
+		await joplin.views.dialogs.setHtml(dialogId, formHtml);
+		await joplin.views.dialogs.setButtons(dialogId, [
+			{ id: 'import', title: 'Import CSV' },
+			{ id: 'preview', title: 'Preview First' },
+			{ id: 'cancel', title: 'Cancel' }
+		]);
+		
+		const result = await joplin.views.dialogs.open(dialogId);
+		
+		if (result.id === 'cancel' || !result.formData) {
+			console.log('CSV import cancelled by user');
+			return;
+		}
+		
+		// Handle form data - Joplin sometimes uses 'null' as the key
+		const formData = result.formData['csv-import-form'] || result.formData['null'] || result.formData;
+		console.log('Form data received:', result.formData);
+		console.log('Using form data:', formData);
+		
+		const csvContent = formData.csvContent;
+		const importLocation = formData.importLocation || 'new-expenses';
+		
+		if (!csvContent || csvContent.trim().length === 0) {
+			await joplin.views.dialogs.showMessageBox('Please paste CSV content to import.');
+			console.log('CSV import cancelled - no content provided');
+			return;
+		}
+		
+		if (result.id === 'preview') {
+			await showCSVPreview(csvContent);
+			return;
+		}
+		
+		// Perform import
+		console.log('Starting CSV import process...');
+		console.log('CSV Content length:', csvContent.length);
+		console.log('Import location:', importLocation);
+		
+		try {
+			const importResult = await csvImportService.importMoneyWalletCSV(csvContent, importLocation as any);
+			console.log('CSV import completed:', importResult);
+		
+			// Show results
+			let message = `CSV Import ${importResult.success ? 'Completed' : 'Failed'}!\n\n`;
+			message += `✅ Successfully imported: ${importResult.imported} expenses\n`;
+			
+			if (importResult.failed > 0) {
+				message += `❌ Failed to import: ${importResult.failed} expenses\n`;
+			}
+			
+			if (importResult.warnings.length > 0) {
+				message += `\n⚠️ Warnings:\n${importResult.warnings.slice(0, 5).join('\n')}`;
+				if (importResult.warnings.length > 5) {
+					message += `\n... and ${importResult.warnings.length - 5} more warnings`;
+				}
+			}
+			
+			if (importResult.errors.length > 0) {
+				message += `\n❌ Errors:\n${importResult.errors.join('\n')}`;
+			}
+			
+			if (importResult.success) {
+				if (importLocation === 'new-expenses') {
+					message += `\n\nExpenses have been added to the "new-expenses" document. Use "Process New Expenses" to move them to monthly documents.`;
+				} else {
+					message += `\n\nExpenses have been imported directly to their respective monthly documents.`;
+				}
+				
+				// Auto-generate summaries if enabled
+				if (settingsService.getSettings().autoProcessing) {
+					console.log('CSV Import: Auto-processing enabled, generating summaries...');
+					try {
+						await summaryService.processAllDocumentSummaries();
+						console.log('CSV Import: Summaries generated successfully');
+						message += `\n\n📊 Expense summaries have been updated automatically.`;
+					} catch (summaryError) {
+						console.error('CSV Import: Failed to generate summaries:', summaryError);
+						message += `\n\n⚠️ Import successful but summary generation failed: ${summaryError.message}`;
+					}
+				} else {
+					console.log('CSV Import: Auto-processing disabled, summaries not updated');
+					message += `\n\n💡 Tip: Use "Generate Expense Summaries" to update charts and summaries.`;
+				}
+			}
+			
+			await joplin.views.dialogs.showMessageBox(message);
+		
+		} catch (importError) {
+			console.error('CSV import failed with exception:', importError);
+			await joplin.views.dialogs.showMessageBox(`CSV Import failed with error:\n\n${importError.message}\n\nCheck console for details.`);
+		}
+		
+	} catch (error) {
+		console.error('Failed to import CSV:', error);
+		await joplin.views.dialogs.showMessageBox('Error importing CSV: ' + error.message);
+	}
+	// Note: Joplin dialogs are automatically cleaned up after open() returns
+}
+
+/**
+ * Show CSV preview before import
+ */
+async function showCSVPreview(csvContent: string) {
+	let previewDialogId: string | null = null;
+	
+	try {
+		const preview = await csvImportService.previewCSVData(csvContent, 3);
+		
+		if (!preview.valid) {
+			await joplin.views.dialogs.showMessageBox('CSV Preview Failed:\n\n' + preview.errors.join('\n'));
+			return;
+		}
+		
+		const timestamp = Date.now();
+		previewDialogId = await joplin.views.dialogs.create(`csv-preview-dialog-${timestamp}`);
+		
+		let previewHtml = `
+			<div style="padding: 10px; max-width: 100vw; box-sizing: border-box;">
+				<h2 style="margin-bottom: 15px;">CSV Import Preview</h2>
+				<p><strong>Total rows:</strong> ${preview.totalRows}</p>
+				<p><strong>Currencies found:</strong> ${preview.currencies.join(', ')}</p>
+		`;
+		
+		if (preview.errors.length > 0) {
+			previewHtml += `
+				<div style="margin: 10px 0; padding: 10px; background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 4px;">
+					<strong>⚠️ Warnings:</strong><br>
+					${preview.errors.slice(0, 3).join('<br>')}
+				</div>
+			`;
+		}
+		
+		if (preview.preview.length > 0) {
+			previewHtml += `
+				<h3>Sample Data (first 3 rows):</h3>
+				<table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
+					<thead>
+						<tr style="background-color: #f8f9fa;">
+							<th style="border: 1px solid #dee2e6; padding: 8px; text-align: left;">Price</th>
+							<th style="border: 1px solid #dee2e6; padding: 8px; text-align: left;">Description</th>
+							<th style="border: 1px solid #dee2e6; padding: 8px; text-align: left;">Category</th>
+							<th style="border: 1px solid #dee2e6; padding: 8px; text-align: left;">Date</th>
+							<th style="border: 1px solid #dee2e6; padding: 8px; text-align: left;">Shop</th>
+						</tr>
+					</thead>
+					<tbody>
+			`;
+			
+			preview.preview.forEach(expense => {
+				const dateObj = new Date(expense.date);
+				const formattedDate = dateObj.toLocaleDateString() + ' ' + dateObj.toLocaleTimeString();
+				previewHtml += `
+					<tr>
+						<td style="border: 1px solid #dee2e6; padding: 8px;">${expense.price}</td>
+						<td style="border: 1px solid #dee2e6; padding: 8px;">${escapeHtml(expense.description)}</td>
+						<td style="border: 1px solid #dee2e6; padding: 8px;">${escapeHtml(expense.category)}</td>
+						<td style="border: 1px solid #dee2e6; padding: 8px;">${formattedDate}</td>
+						<td style="border: 1px solid #dee2e6; padding: 8px;">${escapeHtml(expense.shop)}</td>
+					</tr>
+				`;
+			});
+			
+			previewHtml += `
+					</tbody>
+				</table>
+			`;
+		}
+		
+		previewHtml += '</div>';
+		
+		await joplin.views.dialogs.setHtml(previewDialogId, previewHtml);
+		await joplin.views.dialogs.setButtons(previewDialogId, [
+			{ id: 'ok', title: 'Looks Good - Start Import' },
+			{ id: 'cancel', title: 'Cancel' }
+		]);
+		
+		const previewResult = await joplin.views.dialogs.open(previewDialogId);
+		
+		if (previewResult.id === 'ok') {
+			// Proceed with import
+			const importResult = await csvImportService.importMoneyWalletCSV(csvContent, 'new-expenses');
+			
+			let message = `CSV Import ${importResult.success ? 'Completed' : 'Failed'}!\n\n`;
+			message += `✅ Successfully imported: ${importResult.imported} expenses\n`;
+			
+			if (importResult.failed > 0) {
+				message += `❌ Failed: ${importResult.failed} expenses\n`;
+			}
+			
+			await joplin.views.dialogs.showMessageBox(message);
+		}
+		
+	} catch (error) {
+		await joplin.views.dialogs.showMessageBox('Preview failed: ' + error.message);
+	}
+	// Note: Joplin dialogs are automatically cleaned up after open() returns
+}
+
