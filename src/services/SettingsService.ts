@@ -1,6 +1,7 @@
 import joplin from 'api';
 import { PluginSettings, DEFAULT_SETTINGS } from '../types';
 import { SettingItemType } from 'api/types';
+import { sanitizeCategory } from '../utils/sanitization';
 
 export class SettingsService {
     private static instance: SettingsService;
@@ -75,6 +76,14 @@ export class SettingsService {
                 public: true,
                 label: 'Default Currency Symbol',
                 description: 'Default currency symbol to display in summaries'
+            },
+            'expenses.autocompleteKeybind': {
+                value: DEFAULT_SETTINGS.autocompleteKeybind,
+                type: SettingItemType.String,
+                section: 'expensesSettings',
+                public: true,
+                label: 'Autocomplete Keybind',
+                description: 'Keyboard shortcut to apply autocomplete suggestion (e.g., Ctrl+Enter, Alt+Tab)'
             }
         });
     }
@@ -87,12 +96,20 @@ export class SettingsService {
         const autoProcessing = await joplin.settings.value('expenses.autoProcessing');
         const folderPath = await joplin.settings.value('expenses.folderPath') || DEFAULT_SETTINGS.expensesFolderPath;
         const defaultCurrency = await joplin.settings.value('expenses.defaultCurrency') || DEFAULT_SETTINGS.defaultCurrency;
+        const autocompleteKeybind = await joplin.settings.value('expenses.autocompleteKeybind') || DEFAULT_SETTINGS.autocompleteKeybind;
+
+        // Sanitize loaded categories to prevent injection attacks
+        const rawCategories = categoriesStr.split(',').map(c => c.trim()).filter(c => c.length > 0);
+        const sanitizedCategories = rawCategories
+            .map(cat => sanitizeCategory(cat))
+            .filter(cat => cat.length > 0);
 
         this.settings = {
-            categories: categoriesStr.split(',').map(c => c.trim()).filter(c => c.length > 0),
+            categories: sanitizedCategories.length > 0 ? sanitizedCategories : DEFAULT_SETTINGS.categories,
             autoProcessing: autoProcessing !== undefined ? autoProcessing : DEFAULT_SETTINGS.autoProcessing,
             expensesFolderPath: folderPath,
-            defaultCurrency: defaultCurrency
+            defaultCurrency: defaultCurrency,
+            autocompleteKeybind: autocompleteKeybind
         };
     }
 
@@ -173,6 +190,21 @@ export class SettingsService {
     }
 
     /**
+     * Set autocomplete keybind
+     */
+    async setAutocompleteKeybind(keybind: string): Promise<void> {
+        this.settings.autocompleteKeybind = keybind.trim() || DEFAULT_SETTINGS.autocompleteKeybind;
+        await joplin.settings.setValue('expenses.autocompleteKeybind', this.settings.autocompleteKeybind);
+    }
+
+    /**
+     * Get autocomplete keybind
+     */
+    getAutocompleteKeybind(): string {
+        return this.settings.autocompleteKeybind;
+    }
+
+    /**
      * Reset settings to defaults
      */
     async resetToDefaults(): Promise<void> {
@@ -181,5 +213,8 @@ export class SettingsService {
         await joplin.settings.setValue('expenses.autoProcessing', this.settings.autoProcessing);
         await joplin.settings.setValue('expenses.folderPath', this.settings.expensesFolderPath);
         await joplin.settings.setValue('expenses.defaultCurrency', this.settings.defaultCurrency);
+        await joplin.settings.setValue('expenses.autocompleteKeybind', this.settings.autocompleteKeybind);
     }
 }
+
+export default SettingsService;
