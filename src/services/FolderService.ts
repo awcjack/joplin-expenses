@@ -395,4 +395,68 @@ Add your new expenses here. They will be automatically moved to the appropriate 
             throw error;
         }
     }
+
+    /**
+     * Ensure recurring-expenses document exists
+     */
+    async ensureRecurringExpensesDocumentExists(): Promise<string> {
+        const expensesFolderId = await this.ensureExpensesFolderExists();
+        const noteTitle = 'recurring-expenses';
+        
+        try {
+            // Check if recurring-expenses document already exists
+            const notes = await joplin.data.get(['notes'], { 
+                fields: ['id', 'title', 'parent_id'],
+                parent_id: expensesFolderId
+            });
+            
+            const existingNote = notes.items.find(n => n.title === noteTitle);
+            
+            if (existingNote) {
+                console.info('Found existing recurring-expenses document');
+                return existingNote.id;
+            }
+            
+            // Create recurring-expenses document
+            const body = this.generateRecurringExpensesTemplate();
+            
+            const newNote = await joplin.data.post(['notes'], null, {
+                title: noteTitle,
+                body: body,
+                parent_id: expensesFolderId
+            });
+            
+            console.info('Created recurring-expenses document');
+            return newNote.id;
+        } catch (error) {
+            console.error('Failed to ensure recurring-expenses document exists:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Generate template for recurring-expenses document
+     */
+    private generateRecurringExpensesTemplate(): string {
+        return `# Recurring Expenses
+
+This document tracks recurring expense templates that automatically generate new expense entries.
+
+## How it works:
+- Expenses with recurring patterns (daily, weekly, monthly, yearly) are stored here
+- The plugin automatically checks for due recurring expenses and creates new entries
+- New entries are added to the "new-expenses" document for processing
+
+## Recurring Expenses
+
+| price | description | category | date | shop | attachment | recurring | lastProcessed | nextDue | enabled | sourceNoteId |
+|-------|-------------|----------|------|------|------------|-----------|---------------|---------|---------|--------------|
+
+## Instructions:
+1. Use the table editor to manage recurring expenses
+2. Set "enabled" to "true" to activate a recurring expense
+3. Set "enabled" to "false" to temporarily disable without deleting
+4. The system will automatically update "lastProcessed" and "nextDue" fields
+`;
+    }
 }
