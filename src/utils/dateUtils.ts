@@ -77,12 +77,31 @@ export function getCurrentMonth(): string {
 }
 
 /**
- * Validate date string format (basic check)
+ * Validate date string format (strict check)
  */
 export function isValidDate(dateStr: string): boolean {
     if (!dateStr) return false;
+    
+    // Check basic format for YYYY-MM-DD or ISO format (with optional timezone)
+    const iso8601Regex = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d{3})?(Z|[+-]\d{2}:\d{2})?)?$/;
+    if (!iso8601Regex.test(dateStr)) return false;
+    
     const date = new Date(dateStr);
-    return !isNaN(date.getTime());
+    if (isNaN(date.getTime())) return false;
+    
+    // For YYYY-MM-DD format, ensure the date wasn't auto-adjusted
+    if (dateStr.length >= 10) {
+        const parts = dateStr.slice(0, 10).split('-');
+        const year = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10);
+        const day = parseInt(parts[2], 10);
+        
+        return date.getFullYear() === year &&
+               (date.getMonth() + 1) === month &&
+               date.getDate() === day;
+    }
+    
+    return true;
 }
 
 /**
@@ -112,4 +131,12 @@ export function getNextMonth(yearMonth: string): string {
     const date = new Date(parseInt(year), parseInt(month) - 1, 1);
     date.setMonth(date.getMonth() + 1);
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/**
+ * Parse date string and return Date object
+ */
+export function parseDate(dateStr: string): Date {
+    if (!dateStr) return new Date();
+    return new Date(dateStr);
 }
