@@ -83,22 +83,35 @@ export function isValidDate(dateStr: string): boolean {
     if (!dateStr) return false;
     
     // Check basic format for YYYY-MM-DD or ISO format (with optional timezone)
-    const iso8601Regex = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d{3})?(Z|[+-]\d{2}:\d{2})?)?$/;
+    const iso8601Regex = /^((\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\d|3[01])|(0[469]|11)-(0[1-9]|[12]\d|30)|(02)-(0[1-9]|1\d|2[0-8])))T([01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{3}([+-]([01]\d|2[0-3]):[0-5]\d|Z)$/;
     if (!iso8601Regex.test(dateStr)) return false;
     
     const date = new Date(dateStr);
     if (isNaN(date.getTime())) return false;
     
-    // For YYYY-MM-DD format, ensure the date wasn't auto-adjusted
+    // For date validation, we need to compare the date parts correctly
+    // If the string contains timezone info (Z or offset), use UTC methods
+    // Otherwise, use local methods for YYYY-MM-DD format
     if (dateStr.length >= 10) {
         const parts = dateStr.slice(0, 10).split('-');
         const year = parseInt(parts[0], 10);
         const month = parseInt(parts[1], 10);
         const day = parseInt(parts[2], 10);
         
-        return date.getFullYear() === year &&
-               (date.getMonth() + 1) === month &&
-               date.getDate() === day;
+        // Check if the date string has timezone info
+        const hasTimezone = dateStr.includes('Z') || /[+-]\d{2}:\d{2}/.test(dateStr);
+        
+        if (hasTimezone) {
+            // Use UTC methods for timezone-aware dates
+            return date.getUTCFullYear() === year &&
+                   (date.getUTCMonth() + 1) === month &&
+                   date.getUTCDate() === day;
+        } else {
+            // Use local methods for simple YYYY-MM-DD dates
+            return date.getFullYear() === year &&
+                   (date.getMonth() + 1) === month &&
+                   date.getDate() === day;
+        }
     }
     
     return true;
