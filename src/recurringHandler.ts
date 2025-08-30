@@ -67,20 +67,29 @@ export class RecurringExpenseHandler {
     calculateNextOccurrence(baseDate: Date, recurrence: Recurrence): Date {
         const nextDate = new Date(baseDate);
         
-        switch (recurrence) {
+        // Normalize to lowercase for consistent matching
+        const normalizedRecurrence = recurrence.toLowerCase();
+        console.log(`🔄 CALC: calculateNextOccurrence called with recurrence: "${recurrence}" -> "${normalizedRecurrence}"`);
+        
+        switch (normalizedRecurrence) {
             case 'daily':
                 nextDate.setDate(nextDate.getDate() + 1);
+                console.log('🔄 CALC: Daily recurrence - added 1 day');
                 break;
             case 'weekly':
                 nextDate.setDate(nextDate.getDate() + 7);
+                console.log('🔄 CALC: Weekly recurrence - added 7 days');
                 break;
             case 'monthly':
                 nextDate.setMonth(nextDate.getMonth() + 1);
+                console.log('🔄 CALC: Monthly recurrence - added 1 month');
                 break;
             case 'yearly':
                 nextDate.setFullYear(nextDate.getFullYear() + 1);
+                console.log('🔄 CALC: Yearly recurrence - added 1 year');
                 break;
             default:
+                console.log('🔄 CALC: Unknown recurrence type, no change applied');
                 return nextDate; // No change for empty recurrence
         }
         
@@ -121,7 +130,12 @@ export class RecurringExpenseHandler {
      */
     updateRecurringEntry(recurringEntry: RecurringExpenseEntry): RecurringExpenseEntry {
         const now = new Date();
-        const nextDue = this.calculateNextOccurrence(now, recurringEntry.recurring as Recurrence);
+        // Calculate next occurrence from the current nextDue date, not from now
+        // This ensures consistent scheduling even if processing is delayed
+        const currentDue = parseDate(recurringEntry.nextDue);
+        const nextDue = this.calculateNextOccurrence(currentDue, recurringEntry.recurring as Recurrence);
+        
+        console.log(`🔄 CALC: Updating recurring expense "${recurringEntry.description}": ${recurringEntry.nextDue} -> ${nextDue.toISOString()}`);
         
         return {
             ...recurringEntry,
@@ -159,6 +173,8 @@ export class RecurringExpenseHandler {
                     if (this.isDue(recurringEntry)) {
                         logger.info(`Processing due recurring expense: ${recurringEntry.description}`);
                         
+                        logger.info(`Processing recurring expense: ${recurringEntry.description}, current nextDue: ${recurringEntry.nextDue}`);
+                        
                         // Create new expense entry
                         const newExpense = this.createExpenseFromRecurring(recurringEntry);
                         
@@ -170,10 +186,14 @@ export class RecurringExpenseHandler {
                             result.created++;
                             
                             // Update the recurring entry's next due date
+                            console.log('🔄 PROCESS: About to update recurring entry:', recurringEntry.description);
+                            console.log('🔄 PROCESS: Current nextDue before update:', recurringEntry.nextDue);
                             const updatedRecurring = this.updateRecurringEntry(recurringEntry);
+                            console.log('🔄 PROCESS: Updated recurring entry calculated, new nextDue:', updatedRecurring.nextDue);
+                            
                             await this.updateRecurringExpense(updatedRecurring);
                             
-                            logger.info(`Successfully created recurring expense: ${newExpense.description}`);
+                            logger.info(`Successfully created and updated recurring expense: ${newExpense.description}`);
                         } else {
                             result.errors.push(`Failed to create expense from recurring "${recurringEntry.description}": ${addResult.errors.join(', ')}`);
                         }
@@ -276,28 +296,60 @@ export class RecurringExpenseHandler {
      */
     async updateRecurringExpense(recurringEntry: RecurringExpenseEntry): Promise<void> {
         try {
+            console.log('🔄 UPDATE: Starting updateRecurringExpense for:', recurringEntry.description);
+            console.log('🔄 UPDATE: New nextDue value:', recurringEntry.nextDue);
+            
             const recurringNoteId = await this.folderService.ensureRecurringExpensesDocumentExists();
             const note = await joplin.data.get(['notes', recurringNoteId], { fields: ['body'] });
             
+            console.log('🔄 UPDATE: Retrieved note body length:', note.body.length);
+            
             const existingEntries = this.parseRecurringExpensesTable(note.body);
+            console.log('🔄 UPDATE: Parsed', existingEntries.length, 'existing entries');
             
             // Find and update existing entry or add new one
-            const existingIndex = existingEntries.findIndex(e => 
-                e.description === recurringEntry.description &&
-                e.category === recurringEntry.category &&
-                e.price === recurringEntry.price &&
-                e.shop === recurringEntry.shop
-            );
+            // Use a more robust matching strategy
+            const existingIndex = existingEntries.findIndex(e => {
+                // First try to match by exact description, category, and price
+                const exactMatch = 
+                    e.description.trim() === recurringEntry.description.trim() &&
+                    e.category.trim() === recurringEntry.category.trim() &&
+                    Math.abs(e.price - recurringEntry.price) < 0.01; // Handle floating point precision
+
+                // If exact match fails, try by description and category only (more lenient)
+                const lenientMatch = exactMatch || (
+                    e.description.trim().toLowerCase() === recurringEntry.description.trim().toLowerCase() &&
+                    e.category.trim().toLowerCase() === recurringEntry.category.trim().toLowerCase() &&
+                    e.recurring === recurringEntry.recurring
+                );
+
+                return lenientMatch;
+            });
             
             if (existingIndex !== -1) {
+                console.log('🔄 UPDATE: Found existing entry at index', existingIndex);
+                console.log('🔄 UPDATE: Old nextDue:', existingEntries[existingIndex].nextDue);
+                console.log('🔄 UPDATE: New nextDue:', recurringEntry.nextDue);
                 existingEntries[existingIndex] = recurringEntry;
+                console.log('🔄 UPDATE: Updated entry nextDue:', existingEntries[existingIndex].nextDue);
             } else {
+                console.log('🔄 UPDATE: No existing entry found, adding new one');
                 existingEntries.push(recurringEntry);
             }
             
             // Update the document
+            console.log('🔄 UPDATE: About to update document body');
             const updatedBody = this.updateRecurringTableInContent(note.body, existingEntries);
+            
+            // Debug: Log the updated recurring entry
+            if (existingIndex !== -1) {
+                const updatedEntry = existingEntries[existingIndex];
+                console.log('🔄 UPDATE: Final entry nextDue before save:', updatedEntry.nextDue);
+            }
+            
+            console.log('🔄 UPDATE: About to save document with updated body length:', updatedBody.length);
             await joplin.data.put(['notes', recurringNoteId], null, { body: updatedBody });
+            console.log('🔄 UPDATE: Document saved successfully');
             
         } catch (error) {
             logger.error('Failed to update recurring expense', error);
@@ -309,53 +361,99 @@ export class RecurringExpenseHandler {
      * Update recurring expenses table in document content
      */
     private updateRecurringTableInContent(content: string, entries: RecurringExpenseEntry[]): string {
-        const lines = content.split('\n');
-        let headerIdx = -1;
-        let separatorIdx = -1;
+        console.log('🔄 TABLE: Updating recurring table with', entries.length, 'entries');
+        console.log('🔄 TABLE: Entry nextDue values:', entries.map(e => `${e.description}: ${e.nextDue}`));
         
-        // Find the recurring table header
+        const lines = content.split('\n');
+        const newTable = this.serializeRecurringExpensesTable(entries);
+        console.log('🔄 TABLE: Generated new table:', newTable);
+        
+        // Find ALL instances of recurring table headers (more robust approach)
+        const tableRanges: { start: number, end: number }[] = [];
+        
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i].trim();
-            if (line.startsWith('|') && line.includes('recurring') && line.includes('nextDue')) {
-                headerIdx = i;
-                if (i + 1 < lines.length) {
-                    const nextLine = lines[i + 1].trim();
-                    if (nextLine.startsWith('|') && nextLine.includes('-')) {
-                        separatorIdx = i + 1;
-                    }
+            
+            // Look for recurring table header - must contain specific fields
+            if (line.startsWith('|') && 
+                line.includes('recurring') && 
+                line.includes('nextDue') &&
+                line.includes('lastProcessed') &&
+                line.includes('enabled')) {
+                
+                let tableStart = i;
+                let tableEnd = i + 1;
+                
+                // Skip the separator line if it exists
+                if (tableEnd < lines.length && 
+                    lines[tableEnd].trim().startsWith('|') && 
+                    lines[tableEnd].trim().includes('-')) {
+                    tableEnd++;
                 }
-                break;
+                
+                // Find all consecutive table rows
+                while (tableEnd < lines.length) {
+                    const currentLine = lines[tableEnd].trim();
+                    
+                    // Stop at: empty line, non-table line, headers, comments
+                    if (currentLine === '') {
+                        break;
+                    } else if (!currentLine.startsWith('|')) {
+                        break;
+                    } else if (currentLine.startsWith('#')) {
+                        break;
+                    } else if (currentLine.startsWith('<!--')) {
+                        break;
+                    } else if (currentLine.includes('recurring') && 
+                               currentLine.includes('nextDue') && 
+                               tableEnd > tableStart) {
+                        // Another table header - don't include it
+                        break;
+                    }
+                    
+                    tableEnd++;
+                }
+                
+                // Record this table range
+                tableRanges.push({ start: tableStart, end: tableEnd });
+                
+                logger.info(`Found recurring table at lines ${tableStart + 1}-${tableEnd}, ${tableEnd - tableStart} lines`);
+                
+                // Skip ahead to avoid overlapping ranges
+                i = tableEnd;
             }
         }
         
-        if (headerIdx === -1) {
+        if (tableRanges.length === 0) {
             // No existing table found, append new table
-            return content + '\n\n## Recurring Expenses\n\n' + this.serializeRecurringExpensesTable(entries);
+            logger.info('No existing recurring table found, appending new table');
+            return content + '\n\n## Recurring Expenses\n\n' + newTable;
         }
         
-        // Find the end of the existing table
-        let endIdx = separatorIdx !== -1 ? separatorIdx + 1 : headerIdx + 1;
+        // Remove all found tables (in reverse order to maintain indices)
+        let modifiedLines = [...lines];
         
-        while (endIdx < lines.length) {
-            const line = lines[endIdx].trim();
-            if (line === '' || !line.startsWith('|') || line.startsWith('#')) {
-                break;
-            }
-            endIdx++;
+        for (let i = tableRanges.length - 1; i >= 0; i--) {
+            const range = tableRanges[i];
+            logger.info(`Removing recurring table range ${range.start + 1}-${range.end} (${range.end - range.start} lines)`);
+            modifiedLines.splice(range.start, range.end - range.start);
         }
         
-        // Generate new table content
-        const newTable = this.serializeRecurringExpensesTable(entries);
+        // Insert the new table at the position of the first table that was removed
+        const insertPosition = tableRanges[0].start;
+        const beforeTable = modifiedLines.slice(0, insertPosition);
+        const afterTable = modifiedLines.slice(insertPosition);
         
-        // Replace the table section
-        const beforeTable = lines.slice(0, headerIdx);
-        const afterTable = lines.slice(endIdx);
-        
-        return [
+        // Build the final result
+        const result = [
             ...beforeTable,
             newTable,
             ...afterTable
         ].join('\n');
+        
+        logger.info(`Inserted new recurring table with ${entries.length} entries at position ${insertPosition + 1}`);
+        
+        return result;
     }
 
     /**

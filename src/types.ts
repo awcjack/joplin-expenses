@@ -22,6 +22,7 @@ export interface ExpenseSummary {
 export interface PluginSettings {
     categories: string[];
     autoProcessing: boolean;
+    autoProcessNewExpenses: boolean;
     expensesFolderPath: string;
     defaultCurrency: string;
     autocompleteKeybind: string;
@@ -66,6 +67,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
         'other'
     ],
     autoProcessing: true,
+    autoProcessNewExpenses: true,
     expensesFolderPath: 'expenses',
     defaultCurrency: '$',
     autocompleteKeybind: 'Ctrl+Enter'

@@ -58,8 +58,16 @@ export class SettingsService {
                 type: SettingItemType.Bool,
                 section: 'expensesSettings',
                 public: true,
-                label: 'Auto-Processing',
-                description: 'Automatically process and move expenses from new-expenses document'
+                label: 'Auto-Processing (General)',
+                description: 'Enable automatic processing for summaries and recurring expenses'
+            },
+            'expenses.autoProcessNewExpenses': {
+                value: DEFAULT_SETTINGS.autoProcessNewExpenses,
+                type: SettingItemType.Bool,
+                section: 'expensesSettings',
+                public: true,
+                label: 'Auto-Process New Expenses',
+                description: 'Automatically process expenses when new-expenses document is saved'
             },
             'expenses.folderPath': {
                 value: DEFAULT_SETTINGS.expensesFolderPath,
@@ -94,6 +102,7 @@ export class SettingsService {
     private async loadSettings(): Promise<void> {
         const categoriesStr = await joplin.settings.value('expenses.categories') || DEFAULT_SETTINGS.categories.join(',');
         const autoProcessing = await joplin.settings.value('expenses.autoProcessing');
+        const autoProcessNewExpenses = await joplin.settings.value('expenses.autoProcessNewExpenses');
         const folderPath = await joplin.settings.value('expenses.folderPath') || DEFAULT_SETTINGS.expensesFolderPath;
         const defaultCurrency = await joplin.settings.value('expenses.defaultCurrency') || DEFAULT_SETTINGS.defaultCurrency;
         const autocompleteKeybind = await joplin.settings.value('expenses.autocompleteKeybind') || DEFAULT_SETTINGS.autocompleteKeybind;
@@ -107,6 +116,7 @@ export class SettingsService {
         this.settings = {
             categories: sanitizedCategories.length > 0 ? sanitizedCategories : DEFAULT_SETTINGS.categories,
             autoProcessing: autoProcessing !== undefined ? autoProcessing : DEFAULT_SETTINGS.autoProcessing,
+            autoProcessNewExpenses: autoProcessNewExpenses !== undefined ? autoProcessNewExpenses : DEFAULT_SETTINGS.autoProcessNewExpenses,
             expensesFolderPath: folderPath,
             defaultCurrency: defaultCurrency,
             autocompleteKeybind: autocompleteKeybind

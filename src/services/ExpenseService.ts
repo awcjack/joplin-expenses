@@ -3,16 +3,29 @@ import { ExpenseEntry, ExpenseProcessingResult } from '../types';
 import { parseExpenseTables, serializeExpenseTable, validateExpenseEntry, getTargetYearMonth, getTargetYear, getTargetMonth } from '../expenseParser';
 import { FolderService } from './FolderService';
 import { SettingsService } from './SettingsService';
+import { RecurringExpenseHandler } from '../recurringHandler';
 import { getCurrentDateTime } from '../utils/dateUtils';
+import { sanitizeExpenseEntry } from '../utils/sanitization';
+import { logger, safeErrorMessage } from '../utils/logger';
 
 export class ExpenseService {
     private static instance: ExpenseService;
     private folderService: FolderService;
     private settingsService: SettingsService;
+    private recurringHandler: RecurringExpenseHandler;
 
     private constructor() {
         this.folderService = FolderService.getInstance();
         this.settingsService = SettingsService.getInstance();
+        // Initialize recurringHandler lazily to avoid circular dependency
+        this.recurringHandler = null as any;
+    }
+
+    private getRecurringHandler(): RecurringExpenseHandler {
+        if (!this.recurringHandler) {
+            this.recurringHandler = RecurringExpenseHandler.getInstance();
+        }
+        return this.recurringHandler;
     }
 
     public static getInstance(): ExpenseService {
@@ -27,22 +40,14 @@ export class ExpenseService {
      */
     async addNewExpense(expense: Partial<ExpenseEntry>): Promise<{ success: boolean; errors: string[] }> {
         try {
-            // Validate the expense entry
-            const validation = validateExpenseEntry(expense);
-            if (!validation.valid) {
-                return { success: false, errors: validation.errors };
+            // First sanitize and validate the input
+            const sanitizationResult = sanitizeExpenseEntry(expense);
+            if (sanitizationResult.errors.length > 0) {
+                return { success: false, errors: sanitizationResult.errors };
             }
 
-            // Create complete expense entry with defaults
-            const newExpense: ExpenseEntry = {
-                price: expense.price || 0,
-                description: expense.description || '',
-                category: expense.category || '',
-                date: expense.date || getCurrentDateTime(),
-                shop: expense.shop || '',
-                attachment: expense.attachment || '',
-                recurring: expense.recurring || ''
-            };
+            // Use the sanitized expense entry
+            const newExpense: ExpenseEntry = sanitizationResult.sanitized;
 
             // Get the new-expenses document
             const newExpensesNoteId = await this.folderService.ensureNewExpensesDocumentExists();
@@ -58,11 +63,11 @@ export class ExpenseService {
             const updatedBody = this.updateExpenseTableInContent(note.body, existingEntries);
             await joplin.data.put(['notes', newExpensesNoteId], null, { body: updatedBody });
 
-            console.info('Successfully added new expense to new-expenses document');
+            logger.info('Successfully added new expense to new-expenses document');
             return { success: true, errors: [] };
         } catch (error) {
-            console.error('Failed to add new expense:', error);
-            return { success: false, errors: [`Failed to add expense: ${error.message}`] };
+            logger.error('Failed to add new expense', error);
+            return { success: false, errors: [`Failed to add expense: ${safeErrorMessage(error)}`] };
         }
     }
 
@@ -86,15 +91,16 @@ export class ExpenseService {
             const allExpenses = parseExpenseTables(note.body);
 
             if (allExpenses.length === 0) {
-                console.info('No expenses found in new-expenses document');
+                logger.info('No expenses found in new-expenses document');
                 return result;
             }
 
             // Track which expenses were processed successfully
             const processedExpenses = new Set<ExpenseEntry>();
             
-            // Group expenses by year-month for efficient processing
-            const expensesByYearMonth = new Map<string, ExpenseEntry[]>();
+            // Separate recurring and non-recurring expenses
+            const recurringExpenses: ExpenseEntry[] = [];
+            const regularExpenses: ExpenseEntry[] = [];
             
             for (const expense of allExpenses) {
                 const validation = validateExpenseEntry(expense);
@@ -104,6 +110,33 @@ export class ExpenseService {
                     continue;
                 }
 
+                if (expense.recurring && expense.recurring !== '') {
+                    recurringExpenses.push(expense);
+                } else {
+                    regularExpenses.push(expense);
+                }
+            }
+
+            // Process recurring expenses first
+            for (const expense of recurringExpenses) {
+                try {
+                    // Convert to recurring expense and add to tracking table
+                    const recurringEntry = this.getRecurringHandler().convertToRecurringExpense(expense, expense.recurring as any, newExpensesNoteId);
+                    await this.getRecurringHandler().updateRecurringExpense(recurringEntry);
+                    
+                    result.processed++;
+                    processedExpenses.add(expense);
+                    logger.info(`Created recurring expense: ${expense.description} (${expense.recurring})`);
+                } catch (error) {
+                    result.failed++;
+                    result.errors.push(`Failed to create recurring expense "${expense.description}": ${error.message}`);
+                }
+            }
+
+            // Group regular expenses by year-month for efficient processing
+            const expensesByYearMonth = new Map<string, ExpenseEntry[]>();
+            
+            for (const expense of regularExpenses) {
                 const yearMonth = getTargetYearMonth(expense);
                 if (!expensesByYearMonth.has(yearMonth)) {
                     expensesByYearMonth.set(yearMonth, []);
@@ -131,11 +164,11 @@ export class ExpenseService {
                 await this.updateNewExpensesDocument(newExpensesNoteId, remainingExpenses);
             }
 
-            console.info(`Processed ${result.processed} expenses, ${result.failed} failed`);
+            logger.info(`Processed ${result.processed} expenses, ${result.failed} failed`);
             return result;
         } catch (error) {
-            console.error('Failed to process new expenses:', error);
-            result.errors.push(`Processing failed: ${error.message}`);
+            logger.error('Failed to process new expenses', error);
+            result.errors.push(`Processing failed: ${safeErrorMessage(error)}`);
             return result;
         }
     }
@@ -174,50 +207,109 @@ export class ExpenseService {
         const updatedBody = this.updateExpenseTableInContent(monthlyNote.body, existingExpenses);
         await joplin.data.put(['notes', monthlyNoteId], null, { body: updatedBody });
         
-        console.info(`Moved ${expenses.length} expenses to ${yearMonth}`);
+        logger.info(`Moved ${expenses.length} expenses to ${yearMonth}`);
     }
 
     /**
-     * Update expense table in document content
+     * Update expense table in document content - Completely rewritten to prevent duplication
      */
     private updateExpenseTableInContent(content: string, expenses: ExpenseEntry[]): string {
-        const lines = content.split('\n');
-        let headerIdx = -1;
+        // Strategy: Find and completely remove the old table, then insert the new one
         
-        // Find the expense table header
+        const lines = content.split('\n');
+        const newTable = serializeExpenseTable(expenses);
+        
+        // Find ALL instances of expense table headers (in case there are multiple)
+        const tableRanges: { start: number, end: number }[] = [];
+        
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i].trim();
-            if (line.startsWith('|') && line.includes('price') && line.includes('description')) {
-                headerIdx = i;
-                break;
+            
+            // Look for expense table header
+            if (line.startsWith('|') && 
+                line.includes('price') && 
+                line.includes('description') &&
+                line.includes('category') &&
+                line.includes('date')) {
+                
+                let tableStart = i;
+                let tableEnd = i + 1;
+                
+                // Skip the separator line if it exists
+                if (tableEnd < lines.length && 
+                    lines[tableEnd].trim().startsWith('|') && 
+                    lines[tableEnd].trim().includes('-')) {
+                    tableEnd++;
+                }
+                
+                // Find all consecutive table rows (anything starting with |)
+                while (tableEnd < lines.length) {
+                    const currentLine = lines[tableEnd].trim();
+                    
+                    // Stop at:
+                    // 1. Empty line
+                    // 2. Non-table line (doesn't start with |)
+                    // 3. Another table header
+                    // 4. Markdown headers
+                    // 5. HTML comments
+                    if (currentLine === '') {
+                        break;
+                    } else if (!currentLine.startsWith('|')) {
+                        break;
+                    } else if (currentLine.startsWith('#')) {
+                        break;
+                    } else if (currentLine.startsWith('<!--')) {
+                        break;
+                    } else if (currentLine.includes('price') && 
+                               currentLine.includes('description') && 
+                               tableEnd > tableStart) {
+                        // Another table header - don't include it
+                        break;
+                    }
+                    
+                    tableEnd++;
+                }
+                
+                // Record this table range
+                tableRanges.push({ start: tableStart, end: tableEnd });
+                
+                logger.info(`Found expense table at lines ${tableStart + 1}-${tableEnd}, ${tableEnd - tableStart} lines`);
+                
+                // Skip ahead to avoid finding overlapping ranges
+                i = tableEnd;
             }
         }
         
-        if (headerIdx === -1) {
+        if (tableRanges.length === 0) {
             // No existing table found, append new table
-            return content + '\n\n' + serializeExpenseTable(expenses);
+            logger.info('No existing expense table found, appending new table');
+            return content + '\n\n' + newTable;
         }
         
-        // Find the end of the existing table
-        let endIdx = headerIdx + 1;
-        // Skip the separator line (|-------|)
-        if (endIdx < lines.length && lines[endIdx].trim().startsWith('|') && lines[endIdx].includes('-')) {
-            endIdx++;
-        }
-        // Skip existing data rows
-        while (endIdx < lines.length && lines[endIdx].trim().startsWith('|') && !lines[endIdx].includes('-')) {
-            endIdx++;
+        // Remove all found tables (in reverse order to maintain indices)
+        let modifiedLines = [...lines];
+        
+        for (let i = tableRanges.length - 1; i >= 0; i--) {
+            const range = tableRanges[i];
+            logger.info(`Removing table range ${range.start + 1}-${range.end} (${range.end - range.start} lines)`);
+            modifiedLines.splice(range.start, range.end - range.start);
         }
         
-        // Replace the table section
-        const newTable = serializeExpenseTable(expenses).split('\n');
-        const newContent = [
-            ...lines.slice(0, headerIdx),
-            ...newTable,
-            ...lines.slice(endIdx)
+        // Insert the new table at the position of the first table that was removed
+        const insertPosition = tableRanges[0].start;
+        const beforeTable = modifiedLines.slice(0, insertPosition);
+        const afterTable = modifiedLines.slice(insertPosition);
+        
+        // Build the final result
+        const result = [
+            ...beforeTable,
+            newTable,
+            ...afterTable
         ].join('\n');
         
-        return newContent;
+        logger.info(`Inserted new table with ${expenses.length} expenses at position ${insertPosition + 1}`);
+        
+        return result;
     }
 
     /**
@@ -230,7 +322,7 @@ export class ExpenseService {
         const updatedBody = this.updateExpenseTableInContent(note.body, remainingExpenses);
         await joplin.data.put(['notes', noteId], null, { body: updatedBody });
         
-        console.info(`Updated new-expenses document with ${remainingExpenses.length} remaining expenses`);
+        logger.info(`Updated new-expenses document with ${remainingExpenses.length} remaining expenses`);
     }
 
     /**
@@ -243,7 +335,7 @@ export class ExpenseService {
         const clearedBody = this.updateExpenseTableInContent(note.body, []);
         await joplin.data.put(['notes', noteId], null, { body: clearedBody });
         
-        console.info('Cleared new-expenses document');
+        logger.info('Cleared new-expenses document');
     }
 
     /**
@@ -255,14 +347,14 @@ export class ExpenseService {
             const monthlyNoteId = await this.folderService.findNoteInFolder(folderStructure.yearFolder, month);
             
             if (!monthlyNoteId) {
-                console.warn(`Monthly document not found for ${year}-${month}`);
+                logger.warn(`Monthly document not found for ${year}-${month}`);
                 return [];
             }
             
             const note = await joplin.data.get(['notes', monthlyNoteId], { fields: ['body'] });
             return parseExpenseTables(note.body);
         } catch (error) {
-            console.error(`Failed to get monthly expenses for ${year}-${month}:`, error);
+            logger.error(`Failed to get monthly expenses for ${year}-${month}`, error);
             return [];
         }
     }
@@ -282,7 +374,7 @@ export class ExpenseService {
             
             return allExpenses;
         } catch (error) {
-            console.error(`Failed to get yearly expenses for ${year}:`, error);
+            logger.error(`Failed to get yearly expenses for ${year}`, error);
             return [];
         }
     }
@@ -311,8 +403,8 @@ export class ExpenseService {
                 return { success: true, errors: [] };
             }
         } catch (error) {
-            console.error('Failed to update expense entry:', error);
-            return { success: false, errors: [`Failed to update expense: ${error.message}`] };
+            logger.error('Failed to update expense entry', error);
+            return { success: false, errors: [`Failed to update expense: ${safeErrorMessage(error)}`] };
         }
     }
 
@@ -407,7 +499,7 @@ export class ExpenseService {
             const note = await joplin.data.get(['notes', newExpensesNoteId], { fields: ['body'] });
             return parseExpenseTables(note.body);
         } catch (error) {
-            console.error('Failed to get new expenses:', error);
+            logger.error('Failed to get new expenses', error);
             return [];
         }
     }

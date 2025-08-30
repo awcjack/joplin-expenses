@@ -279,13 +279,29 @@ export class SummaryService {
         // Monthly breakdown
         content += `**Monthly Breakdown:**\n\n`;
         const months = getAllMonths();
+        const monthlyData: Record<string, number> = {};
+        
         for (const month of months) {
             const monthlyExpenses = filterEntriesByYearMonth(expenses, `${year}-${month}`);
             if (monthlyExpenses.length > 0) {
                 const monthlySummary = this.generateSummary(monthlyExpenses);
                 const monthName = formatMonthYear(`${year}-${month}`);
-                content += `- **${monthName}:** ${currency}${(monthlySummary.totalIncome - monthlySummary.totalExpense).toFixed(2)} (${monthlySummary.entryCount} entries)\n`;
+                const netAmount = monthlySummary.totalIncome - monthlySummary.totalExpense;
+                const monthKey = formatMonthYear(`${year}-${month}`).replace(' ', ' '); // Format for display
+                
+                content += `- **${monthName}:** ${currency}${netAmount.toFixed(2)} (${monthlySummary.entryCount} entries)\n`;
+                
+                // Store monthly expense data for chart (only positive expenses, not income)
+                if (monthlySummary.totalExpense > 0) {
+                    monthlyData[month] = monthlySummary.totalExpense;
+                }
             }
+        }
+        
+        // Add monthly expense chart
+        if (Object.keys(monthlyData).length > 0) {
+            content += `\n**Monthly Expense Trends:**\n\n`;
+            content += this.generateMonthlyBarChart(monthlyData, currency, year);
         }
 
         content += `\n**Category Breakdown:**\n\n`;
@@ -496,7 +512,65 @@ export class SummaryService {
         chart += '    bar [';
         chart += expenseCategories.map(([,amount]) => amount.toFixed(2)).join(', ');
         chart += ']\n';
-        chart += '```\n';
+        chart += '```\n\n';
+
+        // Add data labels table for exact values since mermaid xychart-beta doesn't support data labels directly
+        chart += '**Category Details:**\n\n';
+        chart += '| Category | Amount |\n';
+        chart += '|----------|--------|\n';
+        for (const [cat, amount] of expenseCategories) {
+            chart += `| ${cat} | ${currency}${amount.toFixed(2)} |\n`;
+        }
+        chart += '\n';
+
+        return chart;
+    }
+
+    /**
+     * Generate mermaid bar chart for monthly data
+     */
+    private generateMonthlyBarChart(monthlyData: Record<string, number>, currency: string, year: string): string {
+        if (Object.keys(monthlyData).length === 0) {
+            return '';
+        }
+
+        // Convert month numbers to month names and sort chronologically
+        const months = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
+        const sortedData = months
+            .filter(month => monthlyData[month] && monthlyData[month] > 0)
+            .map(month => ({
+                month: month,
+                name: formatMonthYear(`${year}-${month}`).split(' ')[0], // Get just the month name
+                fullName: formatMonthYear(`${year}-${month}`), // Full month-year for table
+                amount: monthlyData[month]
+            }));
+
+        if (sortedData.length === 0) {
+            return '';
+        }
+
+        let chart = '```mermaid\n';
+        chart += 'xychart-beta\n';
+        chart += '    title "Monthly Expense Trends"\n';
+        chart += '    x-axis [';
+        chart += sortedData.map(data => `"${data.name}"`).join(', ');
+        chart += ']\n';
+        chart += '    y-axis "Amount (' + currency + ')" 0 --> ';
+        chart += Math.ceil(Math.max(...sortedData.map(data => data.amount)));
+        chart += '\n';
+        chart += '    bar [';
+        chart += sortedData.map(data => data.amount.toFixed(2)).join(', ');
+        chart += ']\n';
+        chart += '```\n\n';
+
+        // Add data labels table for exact values
+        chart += '**Monthly Details:**\n\n';
+        chart += '| Month | Expense Amount |\n';
+        chart += '|-------|----------------|\n';
+        for (const data of sortedData) {
+            chart += `| ${data.fullName} | ${currency}${data.amount.toFixed(2)} |\n`;
+        }
+        chart += '\n';
 
         return chart;
     }
