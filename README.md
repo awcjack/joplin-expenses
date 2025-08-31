@@ -10,18 +10,16 @@ A comprehensive expense tracking plugin for Joplin with structured folder organi
 - **New Expenses Hub**: `/expenses/new-expenses` for quick expense entry
 
 ### 📊 Auto-Summary Generation
-- **Comment Markers**: Similar to inline-todo plugin using `<!-- expenses-summary -->` markers
+- **Comment Markers**: Using `<!-- expenses-summary -->` markers
 - **Monthly Summaries**: Auto-generated summaries per category per month with visual charts
 - **Annual Reports**: Comprehensive yearly expense analysis with category distribution
 - **Category Breakdown**: Detailed analysis by expense categories
 - **Visual Charts**: Mermaid bar charts showing expense distribution by category
-- **Smart Positioning**: Summaries automatically positioned at document beginning with dark-theme-friendly styling
 
 ### 🎯 Smart Expense Management
 - **Configurable Categories**: Customizable expense categories via settings
 - **Quick Entry**: Add expenses with current timestamp
-- **Auto-Processing**: Automatically move expenses to correct year/month documents with selective row removal
-- **Auto-Date Filling**: Empty date fields are automatically filled when moving expenses
+- **Auto-Processing**: Automatically move expenses to correct year/month documents
 - **Table Editor**: Enhanced spreadsheet-like editor with category dropdowns
 - **Smart Autocomplete**: Category suggestions in markdown and rich text editors
 - **Auto-Sorting**: Expenses automatically sorted by date in descending order (newest first)
@@ -29,7 +27,7 @@ A comprehensive expense tracking plugin for Joplin with structured folder organi
 ## Usage
 
 ### Quick Start
-1. **Initialize Structure**: Use "Initialize Expense Folder Structure" to set up folders
+1. **Initialize Structure**: Use "Initialize Expense Folder Structure" to set up folders (Should init automatically once restart)
 2. **Add Expense**: Use "Add New Expense" to quickly add an expense
 3. **Process Expenses**: Use "Process New Expenses" to move them to monthly documents
 4. **Generate Summaries**: Use "Generate Expense Summaries" to update all auto-summaries
@@ -43,6 +41,9 @@ A comprehensive expense tracking plugin for Joplin with structured folder organi
 - **Process New Expenses**: Moves expenses from new-expenses to monthly documents (removes only successfully moved rows)
 - **Generate Expense Summaries**: Updates all summary comment markers with charts and styling
 - **Open New-Expenses Document**: Opens the quick-entry document
+
+#### Import/Export
+- **Import MoneyWallet CSV**: Import expenses from MoneyWallet Android app CSV export
 
 #### Settings & Maintenance
 - **Manage Expense Categories**: Configure your expense categories
@@ -87,10 +88,10 @@ The plugin automatically processes these comment markers to generate summaries:
 ### Expense Table Format
 
 ```markdown
-| price | description | category | date | shop | attachment | recurring |
-|-------|-------------|----------|------|------|------------|-----------|
-| 12.50 | Coffee      | food     | 2025-01-15T10:30:00 | Cafe | | |
-| -500  | Salary      | income   | 2025-01-01T09:00:00 | Company | | monthly |
+| price | description | category |         date        |   shop  | attachment | recurring |
+|-------|-------------|----------|---------------------|---------|------------|-----------|
+| 12.50 | Coffee      | food     | 2025-01-15T10:30:00 | Cafe    |            |           |
+| -500  | Salary      | income   | 2025-01-01T09:00:00 | Company |            | monthly   |
 ```
 
 ## Settings
@@ -101,15 +102,6 @@ Configure the plugin through **Tools > Options > Expenses Plugin**:
 - **Auto-Processing**: Automatically process summaries when notes are saved
 - **Expenses Folder Path**: Main folder name (default: "expenses")
 - **Default Currency Symbol**: Currency symbol for summaries (default: "$")
-
-## Migration from Old System
-
-If you were using the plugin before this refactor:
-
-1. **Backup**: Export your existing expense notes
-2. **Initialize**: Run "Initialize Expense Folder Structure"
-3. **Copy Data**: Use "Edit Expense Table" on old notes, then copy entries to appropriate monthly documents
-4. **Process**: Use "Generate Expense Summaries" to create auto-summaries
 
 ## Default Categories
 
@@ -160,7 +152,7 @@ src/
 2. Navigate to the category column (3rd column) of an expense table
 3. Start typing a category name
 4. Autocomplete suggestions will appear based on your configured categories
-5. Press Tab or Enter to accept a suggestion
+5. Press Ctrl + Enter or customized keybind to accept a suggestion
 
 ### Auto-Sorted Tables
 - All expense tables are automatically sorted by date in descending order (newest first)
@@ -168,7 +160,6 @@ src/
 - Ensures consistent chronological organization across all documents
 
 ### Auto-Summary in Monthly Document
-```markdown
 # January 2025 Expenses
 
 <div style="color: #ff7979">
@@ -184,7 +175,6 @@ src/
 - food: $12.50
 
 **Expense Distribution:**
-
 ```mermaid
 xychart-beta
     title "Expenses by Category"
@@ -196,34 +186,63 @@ xychart-beta
 </div>
 
 ## Expense Table
-| price | description | category | date | shop | attachment | recurring |
-|-------|-------------|----------|------|------|------------|-----------|
-| 12.50 | Coffee      | food     | 2025-01-15T10:30:00 | Cafe | | |
+| price | description | category |         date        | shop | attachment | recurring |
+|-------|-------------|----------|---------------------|------|------------|-----------|
+| 12.50 | Coffee      | food     | 2025-01-15T10:30:00 | Cafe |            |           |
+
+## CSV Import (MoneyWallet)
+
+The plugin supports importing expense data from MoneyWallet Android app CSV exports.
+
+### How to Import
+
+1. **Export from MoneyWallet**: Use MoneyWallet's export feature to create a CSV file
+2. **Import in Joplin**: Use "Import MoneyWallet CSV" command from Tools menu
+3. **Select Import Location**:
+   - **New-Expenses Document** (recommended): Import to new-expenses for review before processing
+   - **Direct to Monthly Documents**: Import directly to respective monthly documents
+
+### Required CSV Format
+
+MoneyWallet CSV must contain these required columns:
+- **wallet**: Wallet/account name (maps to shop field)
+- **currency**: ISO currency code (e.g., EUR, USD)
+- **category**: Expense category
+- **datetime**: Date and time in format YYYY-MM-DD HH:mm:ss
+- **money**: Transaction amount (negative for expenses, positive for income)
+- **description**: Transaction description
+
+Optional columns:
+- **place**: Place name (takes precedence over wallet for shop field)
+- **event**: Event name (takes precedence over wallet for shop field)
+- **people**: People involved (comma-separated)
+
+### Field Mapping
+
+MoneyWallet CSV → Joplin Expense:
+- `wallet` → `shop` (or `event` → `shop` if event is provided)
+- `category` → `category` (with smart mapping for common categories)
+- `money` → `price`
+- `description` → `description`  
+- `datetime` → `date` (converted to ISO8601 format)
+- `attachment` → `` (always empty)
+- `recurring` → `` (always empty, set to false)
+
+### Example CSV Format
+
+```csv
+wallet,currency,category,datetime,money,description,event,people
+Bank account,EUR,food,2020-03-25 16:08:34,-45.89,Grocery shopping,Weekly shopping,John
+Credit Card,EUR,transport,2020-03-26 09:15:22,-23.56,Bus ticket,,
+Cash,EUR,entertainment,2020-03-27 20:30:00,-15.50,Movie theater,Date night,Alice
+Bank account,EUR,income,2020-03-30 14:00:00,2500.00,Monthly salary,,
 ```
 
-## Changelog
+### Import Features
 
-### v2.0.0 (Refactored - No Legacy Support)
-- ✨ **NEW**: Structured folder organization
-- ✨ **NEW**: Auto-summary generation with comment markers and visual charts
-- ✨ **NEW**: Quick expense entry with current timestamp and auto-date filling
-- ✨ **NEW**: Configurable categories
-- ✨ **NEW**: Smart auto-processing with selective row removal from new-expenses
-- ✨ **NEW**: Built-in table editor with dropdowns and validation
-- ✨ **NEW**: Mermaid bar charts in summaries showing expense distribution
-- ✨ **NEW**: Dark-theme-friendly red styling for summaries
-- ✨ **NEW**: Smart summary positioning at document beginning
-- ✨ **NEW**: Category autocomplete in markdown and rich text editors
-- ✨ **NEW**: Automatic date-based sorting (newest first) for all expense tables
-- 🔄 **IMPROVED**: Settings management with proper Joplin integration
-- 🔄 **IMPROVED**: Better error handling and validation
-- 🔄 **REMOVED**: Legacy table editor and summary panel
-- 📚 **CLEAN**: Streamlined codebase without backward compatibility
-
-### v1.0.0 (Original)
-- Basic expense table editing
-- Simple summary generation
-
-This is your new Joplin plugin. It is suggested that you use this README file to document your plugin.
-
-For information on how to build or publish the plugin, please see [GENERATOR_DOC.md](./GENERATOR_DOC.md)
+- **Validation**: Comprehensive CSV format validation before import
+- **Preview**: Preview first few rows before importing 
+- **Category Mapping**: Intelligent mapping of common category names
+- **Error Handling**: Detailed error reporting for failed imports
+- **Auto-categorization**: Automatically adds new categories to plugin settings
+- **Flexible Import**: Choose between review-first or direct import modes
