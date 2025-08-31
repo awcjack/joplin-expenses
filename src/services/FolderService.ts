@@ -6,9 +6,37 @@ import { SettingsService } from './SettingsService';
 export class FolderService {
     private static instance: FolderService;
     private settingsService: SettingsService;
+    
+    // Simple mutex to prevent race conditions in folder/note creation
+    private operationLocks: Map<string, Promise<any>> = new Map();
 
     private constructor() {
         this.settingsService = SettingsService.getInstance();
+    }
+
+    /**
+     * Execute an operation with a lock to prevent race conditions
+     */
+    private async withLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
+        // If there's already an operation for this key, wait for it
+        const existingLock = this.operationLocks.get(key);
+        if (existingLock) {
+            await existingLock.catch(() => {}); // Ignore errors from previous operations
+        }
+
+        // Create a new lock for this operation
+        const lockPromise = operation();
+        this.operationLocks.set(key, lockPromise);
+
+        try {
+            const result = await lockPromise;
+            return result;
+        } finally {
+            // Clean up the lock only if it's still the current one
+            if (this.operationLocks.get(key) === lockPromise) {
+                this.operationLocks.delete(key);
+            }
+        }
     }
 
     public static getInstance(): FolderService {
@@ -49,24 +77,26 @@ export class FolderService {
         const settings = this.settingsService.getSettings();
         const folderName = settings.expensesFolderPath;
         
-        try {
-            // Try to find existing folder
-            const folders = await joplin.data.get(['folders'], { fields: ['id', 'title'] });
-            const existingFolder = folders.items.find(f => f.title === folderName);
-            
-            if (existingFolder) {
-                console.info(`Found existing expenses folder: ${existingFolder.id}`);
-                return existingFolder.id;
+        return this.withLock(`expense-folder-${folderName}`, async () => {
+            try {
+                // Try to find existing folder
+                const folders = await joplin.data.get(['folders'], { fields: ['id', 'title'] });
+                const existingFolder = folders.items.find(f => f.title === folderName);
+                
+                if (existingFolder) {
+                    console.info(`Found existing expenses folder: ${existingFolder.id}`);
+                    return existingFolder.id;
+                }
+                
+                // Create new folder
+                const newFolder = await joplin.data.post(['folders'], null, { title: folderName });
+                console.info(`Created new expenses folder: ${newFolder.id}`);
+                return newFolder.id;
+            } catch (error) {
+                console.error('Failed to ensure expenses folder exists:', error);
+                throw error;
             }
-            
-            // Create new folder
-            const newFolder = await joplin.data.post(['folders'], null, { title: folderName });
-            console.info(`Created new expenses folder: ${newFolder.id}`);
-            return newFolder.id;
-        } catch (error) {
-            console.error('Failed to ensure expenses folder exists:', error);
-            throw error;
-        }
+        });
     }
 
     /**

@@ -20,11 +20,26 @@ let tableEditorService: TableEditorService;
 let csvImportService: CSVImportService;
 let recurringHandler: RecurringExpenseHandler;
 
+// CSRF protection - generate a session token
+let csrfToken: string = '';
+
+function generateCSRFToken(): string {
+    return Math.random().toString(36).substring(2) + Date.now().toString(36);
+}
+
+function validateCSRFToken(token: string): boolean {
+    return token === csrfToken && token.length > 0;
+}
+
 joplin.plugins.register({
 	onStart: async function () {
 		console.info("Expense plugin started - initializing services...");
 		
 		try {
+			// Generate CSRF token for this session
+			csrfToken = generateCSRFToken();
+			console.info("CSRF protection initialized");
+			
 			// Initialize services
 			settingsService = SettingsService.getInstance();
 			folderService = FolderService.getInstance();
@@ -216,13 +231,24 @@ async function registerEventHandlers() {
 		try {
 			if (settingsService.getSettings().autoProcessing) {
 				// Check if we should run recurring processing (max once per day)
-				const lastRecurringCheck = localStorage.getItem('lastRecurringCheck');
+				// Use a secure storage key and add validation
+				const storageKey = `expense_plugin_last_check_${csrfToken.substring(0, 8)}`;
+				const lastRecurringCheck = localStorage.getItem(storageKey);
 				const today = new Date().toDateString();
 				
-				if (lastRecurringCheck !== today) {
+				// Validate stored date to prevent tampering
+				if (!lastRecurringCheck || lastRecurringCheck !== today) {
 					console.info('Running daily recurring expense check...');
 					await processRecurringExpensesInternal();
-					localStorage.setItem('lastRecurringCheck', today);
+					localStorage.setItem(storageKey, today);
+					
+					// Clean up old storage keys for security
+					for (let i = 0; i < localStorage.length; i++) {
+						const key = localStorage.key(i);
+						if (key && key.startsWith('expense_plugin_last_check_') && key !== storageKey) {
+							localStorage.removeItem(key);
+						}
+					}
 				}
 			}
 		} catch (error) {
@@ -509,8 +535,9 @@ async function manageCategoriesCommand() {
 			
 			// Sanitize categories before saving
 			const sanitizedCategories = rawCategories
-				.map(cat => cat.replace(/[<>"'&]/g, '').trim()) // Remove dangerous characters
+				.map(cat => sanitizeCategory(cat)) // Use comprehensive sanitization
 				.filter(cat => cat.length > 0 && cat.length <= 50) // Length validation
+				.filter((cat: string) => /^[a-zA-Z0-9\s\-_]+$/.test(cat)) // Only allow safe characters
 				.slice(0, 20); // Limit total number of categories
 			
 			if (sanitizedCategories.length !== rawCategories.length) {

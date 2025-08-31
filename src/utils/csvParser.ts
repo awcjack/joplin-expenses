@@ -115,6 +115,19 @@ export function validateMoneyWalletCSV(csvContent: string): CSVValidationResult 
             return result;
         }
         
+        // Security: Limit CSV content size to prevent DoS attacks (10MB max)
+        if (csvContent.length > 10 * 1024 * 1024) {
+            result.errors.push('CSV file too large (maximum 10MB allowed)');
+            return result;
+        }
+        
+        // Security: Limit number of lines to prevent excessive processing
+        const lines = csvContent.split('\n');
+        if (lines.length > 50000) {
+            result.errors.push('CSV file has too many rows (maximum 50,000 allowed)');
+            return result;
+        }
+        
         const { headers, rows } = parseCSVContent(csvContent);
         result.rowCount = rows.length;
         
@@ -164,6 +177,14 @@ export function validateMoneyWalletCSV(csvContent: string): CSVValidationResult 
             if (rows[i].length !== headers.length) {
                 result.errors.push(`Row ${i + 2} has ${rows[i].length} columns but header has ${headers.length} columns`);
                 return result;
+            }
+            
+            // Security: Validate individual cell size limits
+            for (let j = 0; j < rows[i].length; j++) {
+                if (rows[i][j] && rows[i][j].length > 1000) {
+                    result.errors.push(`Row ${i + 2}, column ${j + 1} exceeds maximum cell size (1000 characters)`);
+                    return result;
+                }
             }
         }
         

@@ -140,10 +140,50 @@ export function sanitizeAttachmentUrl(url: string): string {
  */
 function isValidUrl(urlString: string): boolean {
     try {
+        // Additional security checks before URL parsing
+        if (urlString.length > 2048) { // RFC 2616 recommended limit
+            return false;
+        }
+        
+        // Block potentially dangerous URL patterns
+        const dangerousPatterns = [
+            /javascript:/i,
+            /data:/i,
+            /vbscript:/i,
+            /about:/i,
+            /chrome:/i,
+            /chrome-extension:/i,
+            /moz-extension:/i,
+            /ms-appx:/i,
+            /x-wmplayer:/i,
+            /res:/i,
+            /<script/i,
+            /on\w+=/i
+        ];
+        
+        if (dangerousPatterns.some(pattern => pattern.test(urlString))) {
+            return false;
+        }
+        
         const url = new URL(urlString);
+        
         // Only allow safe protocols
         const allowedProtocols = ['http:', 'https:', 'file:'];
-        return allowedProtocols.includes(url.protocol);
+        if (!allowedProtocols.includes(url.protocol)) {
+            return false;
+        }
+        
+        // Additional checks for file URLs (more restrictive)
+        if (url.protocol === 'file:') {
+            // Block file URLs that could access sensitive system files
+            const path = url.pathname.toLowerCase();
+            const blockedPaths = ['/etc/', '/proc/', '/sys/', '/dev/', '/root/', '/home/', '\\windows\\', '\\system32\\'];
+            if (blockedPaths.some(blocked => path.includes(blocked))) {
+                return false;
+            }
+        }
+        
+        return true;
     } catch {
         return false;
     }

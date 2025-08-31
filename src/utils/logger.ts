@@ -108,20 +108,39 @@ export function safeErrorMessage(error: unknown): string {
             return `${error.name}: ${error.message}`;
         }
         
-        // In production, only show safe, generic messages
+        // In production, sanitize error messages to prevent information disclosure
+        const message = error.message || '';
+        
+        // Remove potentially sensitive patterns from error messages
+        const sanitizedMessage = message
+            .replace(/\/[^\s]+/g, '[PATH]') // Remove file paths
+            .replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, '[IP]') // Remove IP addresses
+            .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[EMAIL]') // Remove emails
+            .replace(/[A-Za-z0-9+/=]{20,}/g, '[TOKEN]') // Remove potential tokens/keys
+            .replace(/password=\S+/gi, 'password=[REDACTED]') // Remove password parameters
+            .substring(0, 200); // Limit message length
+        
+        // Only show safe, generic messages for known error types
         const safeMessages = [
             'ValidationError',
             'NetworkError',
             'TimeoutError',
             'NotFoundError',
-            'PermissionError'
+            'PermissionError',
+            'RangeError',
+            'TypeError'
         ];
         
         if (safeMessages.some(safe => error.name.includes(safe))) {
-            return error.message;
+            return sanitizedMessage || 'Validation or network error occurred';
         }
         
         return 'An unexpected error occurred';
+    }
+    
+    if (typeof error === 'string') {
+        // Sanitize string errors as well
+        return error.substring(0, 100).replace(/[<>"'&]/g, '');
     }
     
     return 'Unknown error';

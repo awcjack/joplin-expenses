@@ -3,6 +3,7 @@ import { ExpenseEntry } from '../types';
 import { parseExpenseTables, serializeExpenseTable, createNewExpenseEntry, validateExpenseEntry } from '../expenseParser';
 import { SettingsService } from '../services/SettingsService';
 import { getCurrentDateTime } from '../utils/dateUtils';
+import { escapeHtml } from '../utils/sanitization';
 
 export class TableEditorService {
     private static instance: TableEditorService;
@@ -65,19 +66,20 @@ export class TableEditorService {
         </tr>`;
         
         entries.forEach((e, idx) => {
-            const categoryOptions = categories.map(cat => 
-                `<option value="${cat}" ${e.category === cat ? 'selected' : ''}>${cat}</option>`
-            ).join('');
+            const categoryOptions = categories.map(cat => {
+                const escapedCat = escapeHtml(cat);
+                return `<option value="${escapedCat}" ${escapeHtml(e.category) === escapedCat ? 'selected' : ''}>${escapedCat}</option>`;
+            }).join('');
             
-            const dateValue = e.date ? e.date.slice(0, 16) : ''; // Format for datetime-local
+            const dateValue = e.date ? escapeHtml(e.date.slice(0, 16)) : ''; // Format for datetime-local
             
             formHtml += `<tr>
-                <td><input name="price_${idx}" value="${e.price}" type="number" step="0.01" style="width:80px; padding:4px;"></td>
-                <td><input name="description_${idx}" value="${e.description}" style="width:150px; padding:4px;"></td>
+                <td><input name="price_${idx}" value="${escapeHtml(String(e.price))}" type="number" step="0.01" style="width:80px; padding:4px;"></td>
+                <td><input name="description_${idx}" value="${escapeHtml(e.description)}" style="width:150px; padding:4px;"></td>
                 <td><select name="category_${idx}" style="width:100px; padding:4px;">${categoryOptions}</select></td>
                 <td><input name="date_${idx}" value="${dateValue}" type="datetime-local" style="width:150px; padding:4px;"></td>
-                <td><input name="shop_${idx}" value="${e.shop}" style="width:120px; padding:4px;"></td>
-                <td><input name="attachment_${idx}" value="${e.attachment ?? ""}" style="width:120px; padding:4px;"></td>
+                <td><input name="shop_${idx}" value="${escapeHtml(e.shop)}" style="width:120px; padding:4px;"></td>
+                <td><input name="attachment_${idx}" value="${escapeHtml(e.attachment ?? "")}" style="width:120px; padding:4px;"></td>
                 <td><select name="recurring_${idx}" style="width:80px; padding:4px;">
                     <option value="" ${e.recurring === "" ? 'selected' : ''}>None</option>
                     <option value="daily" ${e.recurring === "daily" ? 'selected' : ''}>Daily</option>
@@ -92,9 +94,10 @@ export class TableEditorService {
         // Row for adding new entry
         const newIdx = entries.length;
         const currentDateTime = getCurrentDateTime().slice(0, 16);
-        const defaultCategoryOptions = categories.map(cat => 
-            `<option value="${cat}">${cat}</option>`
-        ).join('');
+        const defaultCategoryOptions = categories.map(cat => {
+            const escapedCat = escapeHtml(cat);
+            return `<option value="${escapedCat}">${escapedCat}</option>`;
+        }).join('');
         
         formHtml += `<tr style="background-color: #e8f5e8;">
             <td><input name="price_${newIdx}" value="" type="number" step="0.01" style="width:80px; padding:4px;" placeholder="0.00"></td>

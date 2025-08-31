@@ -4,11 +4,28 @@ import { ExpenseService } from './ExpenseService';
 import { SettingsService } from './SettingsService';
 import { filterEntriesByYearMonth, filterEntriesByYear, filterEntriesByCategory } from '../expenseParser';
 import { formatMonthYear, getAllMonths } from '../utils/dateUtils';
+import { escapeHtml, sanitizeCategory } from '../utils/sanitization';
 
 export class SummaryService {
     private static instance: SummaryService;
     private expenseService: ExpenseService;
     private settingsService: SettingsService;
+
+    /**
+     * Sanitize text for Mermaid chart usage to prevent injection attacks
+     */
+    private sanitizeForMermaid(text: string): string {
+        if (typeof text !== 'string') {
+            return '';
+        }
+        
+        // Remove potentially dangerous characters and limit length
+        return text
+            .replace(/[<>"'&\[\]{}()\\|`~!@#$%^&*+=]/g, '') // Remove dangerous characters
+            .replace(/\s+/g, ' ') // Normalize whitespace
+            .trim()
+            .substring(0, 20); // Limit length for chart readability
+    }
 
     private constructor() {
         this.expenseService = ExpenseService.getInstance();
@@ -504,9 +521,9 @@ export class SummaryService {
         chart += 'xychart-beta\n';
         chart += '    title "Expenses by Category"\n';
         chart += '    x-axis [';
-        chart += expenseCategories.map(([cat]) => `"${cat}"`).join(', ');
+        chart += expenseCategories.map(([cat]) => `"${this.sanitizeForMermaid(cat)}"`).join(', ');
         chart += ']\n';
-        chart += '    y-axis "Amount (' + currency + ')" 0 --> ';
+        chart += '    y-axis "Amount (' + this.sanitizeForMermaid(currency) + ')" 0 --> ';
         chart += Math.ceil(Math.max(...expenseCategories.map(([,amount]) => amount)));
         chart += '\n';
         chart += '    bar [';
@@ -519,7 +536,9 @@ export class SummaryService {
         chart += '| Category | Amount |\n';
         chart += '|----------|--------|\n';
         for (const [cat, amount] of expenseCategories) {
-            chart += `| ${cat} | ${currency}${amount.toFixed(2)} |\n`;
+            const sanitizedCat = escapeHtml(sanitizeCategory(cat));
+            const sanitizedCurrency = escapeHtml(currency);
+            chart += `| ${sanitizedCat} | ${sanitizedCurrency}${amount.toFixed(2)} |\n`;
         }
         chart += '\n';
 
@@ -553,9 +572,9 @@ export class SummaryService {
         chart += 'xychart-beta\n';
         chart += '    title "Monthly Expense Trends"\n';
         chart += '    x-axis [';
-        chart += sortedData.map(data => `"${data.name}"`).join(', ');
+        chart += sortedData.map(data => `"${this.sanitizeForMermaid(data.name)}"`).join(', ');
         chart += ']\n';
-        chart += '    y-axis "Amount (' + currency + ')" 0 --> ';
+        chart += '    y-axis "Amount (' + this.sanitizeForMermaid(currency) + ')" 0 --> ';
         chart += Math.ceil(Math.max(...sortedData.map(data => data.amount)));
         chart += '\n';
         chart += '    bar [';

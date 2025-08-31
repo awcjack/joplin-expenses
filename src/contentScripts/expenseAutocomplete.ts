@@ -3,6 +3,38 @@
  * Provides autocomplete suggestions for expense categories in markdown tables
  */
 
+// HTML escape utility for content script security
+function escapeHtml(str: string): string {
+    if (typeof str !== 'string') {
+        return String(str);
+    }
+    
+    return str.replace(/[&<>"']/g, (match) => {
+        const escapeMap: Record<string, string> = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;'
+        };
+        return escapeMap[match] || match;
+    });
+}
+
+// Sanitize category name for security
+function sanitizeCategory(category: string): string {
+    if (typeof category !== 'string') {
+        return '';
+    }
+    
+    // Remove potentially dangerous content and limit length
+    return category
+        .replace(/<[^>]*>/g, '') // Remove HTML tags
+        .replace(/[<>"'&]/g, '') // Remove dangerous characters
+        .trim()
+        .substring(0, 50); // Limit length
+}
+
 console.log('[ExpenseAutocomplete] Content script loaded');
 
 // Global variable to store the autocomplete keybind
@@ -110,8 +142,12 @@ module.exports = {
                                 return;
                             }
                         
-                        // Filter categories based on current input
-                        const suggestions = categories
+                        // Sanitize and filter categories based on current input
+                        const sanitizedCategories = categories
+                            .map(cat => sanitizeCategory(cat))
+                            .filter(cat => cat.length > 0);
+                            
+                        const suggestions = sanitizedCategories
                             .filter((cat: string) => 
                                 cat.toLowerCase().startsWith(currentWord.toLowerCase())
                             )
@@ -295,7 +331,9 @@ module.exports = {
                     // Add suggestions to popup
                     result.list.forEach((suggestion: any, index: number) => {
                         const item = document.createElement('div');
-                        item.textContent = suggestion.text;
+                        // Safely set text content with additional sanitization
+                        const sanitizedText = sanitizeCategory(suggestion.text || '');
+                        item.textContent = sanitizedText;
                         item.className = `expense-autocomplete-item ${index === selectedIndex ? 'selected' : ''}`;
                         item.style.cssText = `
                             padding: 10px 15px;
@@ -320,7 +358,8 @@ module.exports = {
                         
                         // Click to insert suggestion
                         item.addEventListener('click', () => {
-                            insertSuggestion(cm, result, suggestion.text);
+                            const sanitizedSuggestion = sanitizeCategory(suggestion.text || '');
+                            insertSuggestion(cm, result, sanitizedSuggestion);
                             popup.remove();
                         });
                         
@@ -581,7 +620,8 @@ module.exports = {
                                     console.log('[ExpenseAutocomplete] Keybind matched or simple Enter, inserting suggestion...');
                                     e.preventDefault();
                                     e.stopPropagation();
-                                    insertSuggestion(cm, result, result.list[selectedIndex].text);
+                                    const sanitizedSuggestion = sanitizeCategory(result.list[selectedIndex]?.text || '');
+                                    insertSuggestion(cm, result, sanitizedSuggestion);
                                     popup.remove();
                                     document.removeEventListener('keydown', handleKeyDown);
                                 } else {
