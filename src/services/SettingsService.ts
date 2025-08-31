@@ -100,12 +100,21 @@ export class SettingsService {
      * Load settings from Joplin storage
      */
     private async loadSettings(): Promise<void> {
-        const categoriesStr = await joplin.settings.value('expenses.categories') || DEFAULT_SETTINGS.categories.join(',');
-        const autoProcessing = await joplin.settings.value('expenses.autoProcessing');
-        const autoProcessNewExpenses = await joplin.settings.value('expenses.autoProcessNewExpenses');
-        const folderPath = await joplin.settings.value('expenses.folderPath') || DEFAULT_SETTINGS.expensesFolderPath;
-        const defaultCurrency = await joplin.settings.value('expenses.defaultCurrency') || DEFAULT_SETTINGS.defaultCurrency;
-        const autocompleteKeybind = await joplin.settings.value('expenses.autocompleteKeybind') || DEFAULT_SETTINGS.autocompleteKeybind;
+        const settings = await joplin.settings.values([
+            'expenses.categories',
+            'expenses.autoProcessing', 
+            'expenses.autoProcessNewExpenses',
+            'expenses.folderPath',
+            'expenses.defaultCurrency',
+            'expenses.autocompleteKeybind'
+        ]);
+        
+        const categoriesStr = (settings['expenses.categories'] as string) || DEFAULT_SETTINGS.categories.join(',');
+        const autoProcessing = settings['expenses.autoProcessing'] as boolean;
+        const autoProcessNewExpenses = settings['expenses.autoProcessNewExpenses'] as boolean;
+        const folderPath = (settings['expenses.folderPath'] as string) || DEFAULT_SETTINGS.expensesFolderPath;
+        const defaultCurrency = (settings['expenses.defaultCurrency'] as string) || DEFAULT_SETTINGS.defaultCurrency;
+        const autocompleteKeybind = (settings['expenses.autocompleteKeybind'] as string) || DEFAULT_SETTINGS.autocompleteKeybind;
 
         // Sanitize loaded categories to prevent injection attacks
         const rawCategories = categoriesStr.split(',').map(c => c.trim()).filter(c => c.length > 0);
