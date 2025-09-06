@@ -77,23 +77,30 @@ export function getCurrentMonth(): string {
 }
 
 /**
- * Validate date string format (strict check)
+ * Validate date string format (accepts various common formats)
  */
 export function isValidDate(dateStr: string): boolean {
-    if (!dateStr) return false;
-    
-    // Check basic format for YYYY-MM-DD or ISO format (with optional timezone)
-    const iso8601Regex = /^((\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\d|3[01])|(0[469]|11)-(0[1-9]|[12]\d|30)|(02)-(0[1-9]|1\d|2[0-8])))T([01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{3}([+-]([01]\d|2[0-3]):[0-5]\d|Z)$/;
-    if (!iso8601Regex.test(dateStr)) return false;
+    if (!dateStr || typeof dateStr !== 'string') return false;
     
     const date = new Date(dateStr);
     if (isNaN(date.getTime())) return false;
     
-    // For date validation, we need to compare the date parts correctly
-    // If the string contains timezone info (Z or offset), use UTC methods
-    // Otherwise, use local methods for YYYY-MM-DD format
-    if (dateStr.length >= 10) {
-        const parts = dateStr.slice(0, 10).split('-');
+    // For YYYY-MM-DD format, verify the components match the input
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        const parts = dateStr.split('-');
+        const year = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10);
+        const day = parseInt(parts[2], 10);
+        
+        return date.getFullYear() === year &&
+               (date.getMonth() + 1) === month &&
+               date.getDate() === day;
+    }
+    
+    // For ISO-like formats with time (YYYY-MM-DDTHH:mm:ss or with timezone)
+    if (/^\d{4}-\d{2}-\d{2}T/.test(dateStr)) {
+        const datePart = dateStr.slice(0, 10);
+        const parts = datePart.split('-');
         const year = parseInt(parts[0], 10);
         const month = parseInt(parts[1], 10);
         const day = parseInt(parts[2], 10);
@@ -107,13 +114,14 @@ export function isValidDate(dateStr: string): boolean {
                    (date.getUTCMonth() + 1) === month &&
                    date.getUTCDate() === day;
         } else {
-            // Use local methods for simple YYYY-MM-DD dates
+            // Use local methods for simple datetime formats
             return date.getFullYear() === year &&
                    (date.getMonth() + 1) === month &&
                    date.getDate() === day;
         }
     }
     
+    // For other formats, just check if Date object is valid
     return true;
 }
 
