@@ -5,13 +5,30 @@
 import { SettingsService } from '../../src/services/SettingsService';
 import { DEFAULT_SETTINGS } from '../../src/types';
 
-// Access the mocked joplin from setup  
-const mockJoplin = (global as any).mockJoplin;
+// Mock the 'api' module
+jest.mock('api', () => ({
+    default: {
+        settings: {
+            value: jest.fn(),
+            setValue: jest.fn(),
+            values: jest.fn(),
+            registerSection: jest.fn(),
+            registerSettings: jest.fn()
+        }
+    }
+}));
+
+// Import the mocked joplin API
+import joplin from 'api';
+const mockJoplin = joplin as jest.Mocked<typeof joplin>;
 
 describe('SettingsService', () => {
   let settingsService: SettingsService;
 
   beforeEach(() => {
+    // Reset all mocks
+    jest.clearAllMocks();
+    
     // Reset the singleton instance
     (SettingsService as any).instance = undefined;
     settingsService = SettingsService.getInstance();
@@ -27,14 +44,15 @@ describe('SettingsService', () => {
 
   describe('initialize', () => {
     beforeEach(() => {
-      // Mock Joplin settings responses (in the order they're loaded)
-      mockJoplin.settings.value
-        .mockResolvedValueOnce('food,transport,utilities') // categories
-        .mockResolvedValueOnce(true) // autoProcessing
-        .mockResolvedValueOnce(true) // autoProcessNewExpenses
-        .mockResolvedValueOnce('expenses') // folderPath
-        .mockResolvedValueOnce('$') // defaultCurrency
-        .mockResolvedValueOnce('Ctrl+Enter'); // autocompleteKeybind
+      // Mock Joplin settings responses
+      (mockJoplin.settings.values as jest.Mock).mockResolvedValue({
+        'expenses.categories': 'food,transport,utilities',
+        'expenses.autoProcessing': true,
+        'expenses.autoProcessNewExpenses': true,
+        'expenses.folderPath': 'expenses',
+        'expenses.defaultCurrency': '$',
+        'expenses.autocompleteKeybind': 'Ctrl+Enter'
+      });
     });
 
     it('should register settings section', async () => {
@@ -81,7 +99,7 @@ describe('SettingsService', () => {
     });
 
     it('should handle initialization errors gracefully', async () => {
-      mockJoplin.settings.registerSection.mockRejectedValueOnce(new Error('Network error'));
+      (mockJoplin.settings.registerSection as jest.Mock).mockRejectedValueOnce(new Error('Network error'));
       
       await settingsService.initialize();
       
@@ -114,7 +132,9 @@ describe('SettingsService', () => {
 
   describe('getCategories', () => {
     it('should return copy of categories array', async () => {
-      mockJoplin.settings.value.mockResolvedValueOnce('food,transport');
+      (mockJoplin.settings.values as jest.Mock).mockResolvedValueOnce({
+        'expenses.categories': 'food,transport'
+      });
       await settingsService.initialize();
       
       const categories1 = settingsService.getCategories();
@@ -127,7 +147,14 @@ describe('SettingsService', () => {
 
   describe('addCategory', () => {
     beforeEach(async () => {
-      mockJoplin.settings.value.mockResolvedValueOnce('food,transport');
+      (mockJoplin.settings.values as jest.Mock).mockResolvedValue({
+        'expenses.categories': 'food,transport',
+        'expenses.autoProcessing': true,
+        'expenses.autoProcessNewExpenses': true,
+        'expenses.folderPath': 'expenses',
+        'expenses.defaultCurrency': '$',
+        'expenses.autocompleteKeybind': 'Ctrl+Enter'
+      });
       await settingsService.initialize();
     });
 
@@ -165,7 +192,14 @@ describe('SettingsService', () => {
 
   describe('removeCategory', () => {
     beforeEach(async () => {
-      mockJoplin.settings.value.mockResolvedValueOnce('food,transport,utilities');
+      (mockJoplin.settings.values as jest.Mock).mockResolvedValue({
+        'expenses.categories': 'food,transport,utilities',
+        'expenses.autoProcessing': true,
+        'expenses.autoProcessNewExpenses': true,
+        'expenses.folderPath': 'expenses',
+        'expenses.defaultCurrency': '$',
+        'expenses.autocompleteKeybind': 'Ctrl+Enter'
+      });
       await settingsService.initialize();
     });
 
@@ -298,12 +332,14 @@ describe('SettingsService', () => {
   describe('resetToDefaults', () => {
     beforeEach(async () => {
       // Initialize with custom settings
-      mockJoplin.settings.value
-        .mockResolvedValueOnce('custom1,custom2')
-        .mockResolvedValueOnce(false)
-        .mockResolvedValueOnce('custom-folder')
-        .mockResolvedValueOnce('€')
-        .mockResolvedValueOnce('Alt+Tab');
+      (mockJoplin.settings.values as jest.Mock).mockResolvedValue({
+        'expenses.categories': 'custom1,custom2',
+        'expenses.autoProcessing': false,
+        'expenses.autoProcessNewExpenses': false,
+        'expenses.folderPath': 'custom-folder',
+        'expenses.defaultCurrency': '€',
+        'expenses.autocompleteKeybind': 'Alt+Tab'
+      });
       
       await settingsService.initialize();
     });
