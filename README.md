@@ -1,3 +1,5 @@
+**The code is mainly created via copilot and claude code and some of the feature haven't been tested**
+
 # Joplin Expense Plugin
 
 A comprehensive expense tracking plugin for Joplin with structured folder organization and automatic summary generation.
