@@ -98,6 +98,9 @@ export class SummaryService {
             // Process markers in reverse order to maintain correct indices
             for (let i = markers.length - 1; i >= 0; i--) {
                 const marker = markers[i];
+                if (marker.startIndex === -1 || marker.endIndex === -1) {
+                    continue; // Invalid marker
+                }
                 const summaryContent = await this.generateMarkerSummary(marker);
                 updatedContent = this.replaceSummaryContent(updatedContent, marker, summaryContent);
             }
