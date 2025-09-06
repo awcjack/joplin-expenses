@@ -20,25 +20,12 @@ let tableEditorService: TableEditorService;
 let csvImportService: CSVImportService;
 let recurringHandler: RecurringExpenseHandler;
 
-// CSRF protection - generate a session token
-let csrfToken: string = '';
-
-function generateCSRFToken(): string {
-    return Math.random().toString(36).substring(2) + Date.now().toString(36);
-}
-
-function validateCSRFToken(token: string): boolean {
-    return token === csrfToken && token.length > 0;
-}
 
 joplin.plugins.register({
 	onStart: async function () {
 		console.info("Expense plugin started - initializing services...");
 		
 		try {
-			// Generate CSRF token for this session
-			csrfToken = generateCSRFToken();
-			console.info("CSRF protection initialized");
 			
 			// Initialize services
 			settingsService = SettingsService.getInstance();
@@ -231,24 +218,14 @@ async function registerEventHandlers() {
 		try {
 			if (settingsService.getSettings().autoProcessing) {
 				// Check if we should run recurring processing (max once per day)
-				// Use a secure storage key and add validation
-				const storageKey = `expense_plugin_last_check_${csrfToken.substring(0, 8)}`;
+				const storageKey = 'expense_plugin_last_check';
 				const lastRecurringCheck = localStorage.getItem(storageKey);
 				const today = new Date().toDateString();
 				
-				// Validate stored date to prevent tampering
 				if (!lastRecurringCheck || lastRecurringCheck !== today) {
 					console.info('Running daily recurring expense check...');
 					await processRecurringExpensesInternal();
 					localStorage.setItem(storageKey, today);
-					
-					// Clean up old storage keys for security
-					for (let i = 0; i < localStorage.length; i++) {
-						const key = localStorage.key(i);
-						if (key && key.startsWith('expense_plugin_last_check_') && key !== storageKey) {
-							localStorage.removeItem(key);
-						}
-					}
 				}
 			}
 		} catch (error) {
