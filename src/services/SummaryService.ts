@@ -1,5 +1,5 @@
 import joplin from 'api';
-import { ExpenseEntry, ExpenseSummary, SummaryMarker, COMMENT_MARKERS } from '../types';
+import { ExpenseEntry, ExpenseSummary, SummaryMarker, SummaryMarkerType, COMMENT_MARKERS } from '../types';
 import { ExpenseService } from './ExpenseService';
 import { SettingsService } from './SettingsService';
 import { filterEntriesByYearMonth, filterEntriesByYear, filterEntriesByCategory } from '../expenseParser';
@@ -128,7 +128,7 @@ export class SummaryService {
                 if (endIndex !== -1) {
                     const params = this.parseMarkerParams(line);
                     markers.push({
-                        type: 'monthly',
+                        type: SummaryMarkerType.MONTHLY,
                         month: params.month,
                         category: params.category,
                         startIndex: i,
@@ -144,7 +144,7 @@ export class SummaryService {
                 if (endIndex !== -1) {
                     const params = this.parseMarkerParams(line);
                     markers.push({
-                        type: 'annual',
+                        type: SummaryMarkerType.ANNUAL,
                         year: params.year,
                         startIndex: i,
                         endIndex: endIndex,
@@ -159,7 +159,7 @@ export class SummaryService {
                 if (endIndex !== -1) {
                     const params = this.parseMarkerParams(line);
                     markers.push({
-                        type: 'breakdown',
+                        type: SummaryMarkerType.BREAKDOWN,
                         category: params.category,
                         month: params.month,
                         year: params.year,
@@ -209,11 +209,11 @@ export class SummaryService {
     private async generateMarkerSummary(marker: SummaryMarker): Promise<string> {
         try {
             switch (marker.type) {
-                case 'monthly':
+                case SummaryMarkerType.MONTHLY:
                     return await this.generateMonthlySummary(marker.month, marker.category);
-                case 'annual':
+                case SummaryMarkerType.ANNUAL:
                     return await this.generateAnnualSummary(marker.year);
-                case 'breakdown':
+                case SummaryMarkerType.BREAKDOWN:
                     return await this.generateBreakdownSummary(marker);
                 default:
                     return 'Unknown marker type';
@@ -399,7 +399,7 @@ export class SummaryService {
         const lines = content.split('\n');
         
         // Check if this is a monthly or annual summary that should be at the beginning
-        const shouldBeAtBeginning = (marker.type === 'monthly' || marker.type === 'annual') && 
+        const shouldBeAtBeginning = (marker.type === SummaryMarkerType.MONTHLY || marker.type === SummaryMarkerType.ANNUAL) && 
                                   marker.startIndex > 0;
 
         if (shouldBeAtBeginning) {
@@ -424,13 +424,13 @@ export class SummaryService {
 
             // Create the proper marker start line
             let startMarker = '';
-            if (marker.type === 'monthly') {
+            if (marker.type === SummaryMarkerType.MONTHLY) {
                 startMarker = `${COMMENT_MARKERS.MONTHLY_START}${marker.month ? ` month="${marker.month}"` : ''} -->`;
-            } else if (marker.type === 'annual') {
+            } else if (marker.type === SummaryMarkerType.ANNUAL) {
                 startMarker = `${COMMENT_MARKERS.ANNUAL_START}${marker.year ? ` year="${marker.year}"` : ''} -->`;
             }
 
-            const endMarker = marker.type === 'monthly' ? COMMENT_MARKERS.MONTHLY_END : COMMENT_MARKERS.ANNUAL_END;
+            const endMarker = marker.type === SummaryMarkerType.MONTHLY ? COMMENT_MARKERS.MONTHLY_END : COMMENT_MARKERS.ANNUAL_END;
 
             // Insert new summary after title
             const newLines = contentWithoutOldSummary.split('\n');

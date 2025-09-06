@@ -36,8 +36,14 @@ export interface FolderStructure {
     newExpensesNote: string;
 }
 
+export enum SummaryMarkerType {
+    MONTHLY = 'monthly',
+    ANNUAL = 'annual',
+    BREAKDOWN = 'breakdown'
+}
+
 export interface SummaryMarker {
-    type: 'monthly' | 'annual' | 'breakdown';
+    type: SummaryMarkerType;
     category?: string;
     month?: string;
     year?: string;
