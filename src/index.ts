@@ -394,6 +394,15 @@ async function editExpenseTableCommand() {
 			return;
 		}
 		
+		// Check if this is an expense-related note
+		const structure = await folderService.getAllExpenseStructure();
+		const isExpenseNote = structure.notes.some(n => n.id === note.id);
+		
+		if (!isExpenseNote) {
+			await joplin.views.dialogs.showMessageBox('The selected note is not in an expense folder. Please select a note from your expense documents.');
+			return;
+		}
+		
 		await tableEditorService.openTableEditor(note.id);
 		
 	} catch (error) {
