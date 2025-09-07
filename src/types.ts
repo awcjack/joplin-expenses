@@ -26,6 +26,7 @@ export interface PluginSettings {
     expensesFolderPath: string;
     defaultCurrency: string;
     autocompleteKeybind: string;
+    defaultTimezone: string;
 }
 
 export interface FolderStructure {
@@ -103,7 +104,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     autoProcessNewExpenses: true,
     expensesFolderPath: 'expenses',
     defaultCurrency: '$',
-    autocompleteKeybind: 'Ctrl+Enter'
+    autocompleteKeybind: 'Ctrl+Enter',
+    defaultTimezone: 'local'
 };
 
 // Constants for folder structure
