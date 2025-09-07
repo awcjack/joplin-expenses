@@ -29,9 +29,9 @@ A comprehensive expense tracking plugin for Joplin with structured folder organi
 ## Screenshots
 
 ### Plugin Interface & Folder Structure
-![Auto-Generated Summary](screenshots/plugin-summary-view-1.png)
-![Auto-Generated Summary](screenshots/plugin-summary-view-2.png)
-![Auto-Generated Summary](screenshots/plugin-summary-view-3.png)
+![Auto-Generated Summary](screenshots/annual-summary-1.png)
+![Auto-Generated Summary](screenshots/annual-summary-2.png)
+![Auto-Generated Summary](screenshots/annual-summary-3.png)
 *Auto-generated expense summary with visual charts, category breakdown, and organized folder structure in the sidebar*
 
 ![Expense Table View](screenshots/plugin-table-view.png)
