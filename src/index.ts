@@ -10,6 +10,7 @@ import { RecurringExpenseHandler } from './recurringHandler';
 import { createNewExpenseEntry } from './expenseParser';
 import { getCurrentDateTime } from './utils/dateUtils';
 import { escapeHtml, sanitizeExpenseEntry } from './utils/sanitization';
+import { MemoryManager, initializeMemoryManagement } from './utils/memoryUtils';
 
 // Service instances
 let settingsService: SettingsService;
@@ -26,6 +27,8 @@ joplin.plugins.register({
 		console.info("Expense plugin started - initializing services...");
 		
 		try {
+			// Initialize memory management first
+			initializeMemoryManagement();
 			
 			// Initialize services
 			settingsService = SettingsService.getInstance();
@@ -35,6 +38,11 @@ joplin.plugins.register({
 			tableEditorService = TableEditorService.getInstance();
 			csvImportService = CSVImportService.getInstance();
 			recurringHandler = RecurringExpenseHandler.getInstance();
+			
+			// Register services with memory manager for monitoring
+			const memoryManager = MemoryManager.getInstance();
+			memoryManager.registerCacheManager('SummaryService', summaryService);
+			memoryManager.registerCacheManager('FolderService', folderService);
 			
 			// Initialize settings first
 			await settingsService.initialize();
@@ -165,6 +173,15 @@ async function registerCommands() {
 			await importMoneyWalletCSVCommand();
 		},
 	});
+
+	// Memory diagnostics command (for debugging)
+	await joplin.commands.register({
+		name: 'showMemoryStats',
+		label: 'Show Memory Statistics (Debug)',
+		execute: async () => {
+			await showMemoryStatsCommand();
+		},
+	});
 }
 
 /**
@@ -189,6 +206,9 @@ async function registerMenuItems() {
 	// Recurring expenses
 	await joplin.views.menuItems.create('processRecurringMenu', 'processRecurringExpenses', MenuItemLocation.Tools);
 	await joplin.views.menuItems.create('openRecurringMenu', 'openRecurringExpensesDocument', MenuItemLocation.Tools);
+	
+	// Debug/Development tools
+	await joplin.views.menuItems.create('showMemoryStatsMenu', 'showMemoryStats', MenuItemLocation.Tools);
 }
 
 /**
@@ -430,10 +450,31 @@ async function processNewExpensesCommand() {
 			message += `\nExpenses have been moved to their respective monthly documents.`;
 		}
 		
+		// Process recurring expenses immediately after processing new expenses
+		let recurringResult = { processed: 0, created: 0, errors: [] };
+		if (result.processed > 0) {
+			try {
+				console.info('Triggering recurring expense processing after new expense processing...');
+				recurringResult = await processRecurringExpensesInternal();
+				
+				if (recurringResult.created > 0) {
+					message += `\n\n🔄 Recurring expenses processed:\n`;
+					message += `✅ Created: ${recurringResult.created} new recurring entries\n`;
+					
+					if (recurringResult.errors.length > 0) {
+						message += `❌ Recurring errors: ${recurringResult.errors.length}\n`;
+					}
+				}
+			} catch (recurringError) {
+				console.error('Failed to process recurring expenses after new expense processing:', recurringError);
+				message += `\n\n⚠️ Recurring expense processing failed: ${recurringError.message}`;
+			}
+		}
+		
 		await joplin.views.dialogs.showMessageBox(message);
 		
 		// Auto-generate summaries if processing was successful
-		if (result.processed > 0 && settingsService.getSettings().autoProcessing) {
+		if ((result.processed > 0 || recurringResult.created > 0) && settingsService.getSettings().autoProcessing) {
 			await summaryService.processAllDocumentSummaries();
 		}
 		
@@ -551,6 +592,11 @@ async function initializeFolderStructureCommand() {
 	try {
 		await joplin.views.dialogs.showMessageBox('Initializing expense folder structure...');
 		
+		// Clear all caches before initialization since the folder structure might have been deleted/recreated
+		console.info('Clearing all caches before folder structure initialization...');
+		folderService.invalidateAllCaches();
+		summaryService.invalidateAllCaches();
+		
 		await folderService.initializeFolderStructure();
 		
 		await joplin.views.dialogs.showMessageBox('✅ Expense folder structure initialized successfully!');
@@ -664,6 +710,20 @@ async function autoProcessNewExpensesIfNeeded(noteId: string, noteTitle?: string
 		
 		if (result.processed > 0 || result.failed > 0) {
 			console.info(`Auto-processing completed: ${result.processed} processed, ${result.failed} failed`);
+			
+			// Process recurring expenses immediately after processing new expenses
+			if (result.processed > 0) {
+				try {
+					console.info('Auto-processing: Triggering recurring expense processing...');
+					const recurringResult = await processRecurringExpensesInternal();
+					
+					if (recurringResult.created > 0) {
+						console.info(`Auto-processing: Created ${recurringResult.created} new recurring expenses`);
+					}
+				} catch (recurringError) {
+					console.error('Auto-processing: Failed to process recurring expenses:', recurringError);
+				}
+			}
 			
 			// Show a subtle notification (optional - can be disabled if too intrusive)
 			if (result.processed > 0) {
@@ -964,5 +1024,78 @@ async function showCSVPreview(csvContent: string) {
 		await joplin.views.dialogs.showMessageBox('Preview failed: ' + error.message);
 	}
 	// Note: Joplin dialogs are automatically cleaned up after open() returns
+}
+
+/**
+ * Show memory statistics command implementation
+ */
+async function showMemoryStatsCommand() {
+	try {
+		const memoryManager = MemoryManager.getInstance();
+		const report = memoryManager.getMemoryReport();
+		
+		let message = `📊 Memory Statistics Report\n\n`;
+		message += `🗂️ Total Cache Entries: ${report.totalCacheSize}\n`;
+		message += `🔧 Active Cache Managers: ${report.activeCaches.join(', ')}\n\n`;
+		
+		message += `💾 Estimated Memory Usage:\n`;
+		message += `  • Used: ${(report.memoryUsage.used / 1024 / 1024).toFixed(2)} MB\n`;
+		message += `  • Free: ${(report.memoryUsage.free / 1024 / 1024).toFixed(2)} MB\n`;
+		message += `  • Total: ${(report.memoryUsage.total / 1024 / 1024).toFixed(2)} MB\n`;
+		message += `  • Usage: ${((report.memoryUsage.used / report.memoryUsage.total) * 100).toFixed(1)}%\n\n`;
+		
+		// Get detailed stats from individual services
+		const detailStats = memoryManager.getAllCacheStats();
+		message += `📈 Detailed Cache Statistics:\n`;
+		for (const [service, stats] of Object.entries(detailStats)) {
+			if (stats.error) {
+				message += `  • ${service}: Error - ${stats.error}\n`;
+			} else {
+				message += `  • ${service}: ${stats.totalEntries || 0} entries\n`;
+				if (stats.yearlyCache) message += `    - Yearly: ${stats.yearlyCache}\n`;
+				if (stats.monthlyCache) message += `    - Monthly: ${stats.monthlyCache}\n`;
+				if (stats.summaryCache) message += `    - Summary: ${stats.summaryCache}\n`;
+				if (stats.operationLocks) message += `    - Locks: ${stats.operationLocks}\n`;
+				if (stats.yearStructureCache) message += `    - Year Structure: ${stats.yearStructureCache}\n`;
+				if (stats.noteFindCache) message += `    - Note Find: ${stats.noteFindCache}\n`;
+			}
+		}
+		
+		if (report.recommendations.length > 0) {
+			message += `\n💡 Recommendations:\n`;
+			report.recommendations.forEach(rec => message += `  • ${rec}\n`);
+		}
+		
+		message += `\n🧹 Memory Cleanup Actions:\n`;
+		message += `  • Click "Force Cleanup" to clear expired caches\n`;
+		message += `  • Click "Emergency Cleanup" to clear all caches\n`;
+		
+		const dialogId = await joplin.views.dialogs.create('memory-stats-dialog');
+		await joplin.views.dialogs.setHtml(dialogId, `
+			<div style="padding: 15px; font-family: monospace; white-space: pre-line; max-height: 70vh; overflow-y: auto;">
+				${message.replace(/\n/g, '<br>').replace(/ /g, '&nbsp;')}
+			</div>
+		`);
+		
+		await joplin.views.dialogs.setButtons(dialogId, [
+			{ id: 'cleanup', title: 'Force Cleanup' },
+			{ id: 'emergency', title: 'Emergency Cleanup' },
+			{ id: 'ok', title: 'Close' }
+		]);
+		
+		const result = await joplin.views.dialogs.open(dialogId);
+		
+		if (result.id === 'cleanup') {
+			memoryManager.forceGlobalCleanup();
+			await joplin.views.dialogs.showMessageBox('Memory cleanup completed! Check console for details.');
+		} else if (result.id === 'emergency') {
+			memoryManager.emergencyCleanup();
+			await joplin.views.dialogs.showMessageBox('Emergency cleanup completed! All caches cleared.');
+		}
+		
+	} catch (error) {
+		console.error('Failed to show memory stats:', error);
+		await joplin.views.dialogs.showMessageBox('Error showing memory stats: ' + error.message);
+	}
 }
 

@@ -115,16 +115,16 @@ export function validateMoneyWalletCSV(csvContent: string): CSVValidationResult 
             return result;
         }
         
-        // Security: Limit CSV content size to prevent DoS attacks (10MB max)
-        if (csvContent.length > 10 * 1024 * 1024) {
-            result.errors.push('CSV file too large (maximum 10MB allowed)');
+        // Security: Limit CSV content size to prevent DoS attacks (5MB max - reduced for better memory management)
+        if (csvContent.length > 5 * 1024 * 1024) {
+            result.errors.push('CSV file too large (maximum 5MB allowed for memory optimization)');
             return result;
         }
         
-        // Security: Limit number of lines to prevent excessive processing
+        // Security: Limit number of lines to prevent excessive processing (reduced for better memory management)
         const lines = csvContent.split('\n');
-        if (lines.length > 50000) {
-            result.errors.push('CSV file has too many rows (maximum 50,000 allowed)');
+        if (lines.length > 10000) {
+            result.errors.push('CSV file has too many rows (maximum 10,000 allowed for memory optimization)');
             return result;
         }
         
@@ -270,4 +270,80 @@ export function parseMoneyWalletCSV(csvContent: string): MoneyWalletCSVRow[] {
     
     logger.info(`Successfully parsed ${parsedRows.length} rows from CSV`);
     return parsedRows;
+}
+
+/**
+ * Process CSV in chunks to reduce memory usage for large files
+ */
+export function* parseMoneyWalletCSVChunked(csvContent: string, chunkSize: number = 100): Generator<MoneyWalletCSVRow[], void, unknown> {
+    const validation = validateMoneyWalletCSV(csvContent);
+    
+    if (!validation.valid) {
+        throw new Error(`Invalid CSV format: ${validation.errors.join(', ')}`);
+    }
+    
+    const { headers, rows } = parseCSVContent(csvContent);
+    const normalizedHeaders = headers.map(normalizeHeader);
+    
+    // Create header index mapping with alias support
+    const headerMap: Record<string, number> = {};
+    normalizedHeaders.forEach((header, index) => {
+        headerMap[header] = index;
+        if (COLUMN_ALIASES[header]) {
+            headerMap[COLUMN_ALIASES[header]] = index;
+        }
+    });
+    
+    // Process rows in chunks
+    for (let i = 0; i < rows.length; i += chunkSize) {
+        const chunk = rows.slice(i, i + chunkSize);
+        const parsedChunk: MoneyWalletCSVRow[] = [];
+        
+        for (let j = 0; j < chunk.length; j++) {
+            const row = chunk[j];
+            
+            try {
+                // Skip empty rows
+                if (row.every(cell => !cell || cell.trim().length === 0)) {
+                    continue;
+                }
+                
+                const parsedRow: MoneyWalletCSVRow = {
+                    wallet: row[headerMap['wallet']] || '',
+                    currency: row[headerMap['currency']] || '',
+                    category: row[headerMap['category']] || '',
+                    datetime: row[headerMap['datetime']] || '',
+                    money: row[headerMap['money']] || '',
+                    description: row[headerMap['description']] || ''
+                };
+                
+                // Add optional fields if present
+                if (headerMap['event'] !== undefined) {
+                    parsedRow.event = row[headerMap['event']] || '';
+                }
+                
+                if (headerMap['people'] !== undefined) {
+                    parsedRow.people = row[headerMap['people']] || '';
+                }
+                
+                // Validate required fields
+                if (!parsedRow.currency || !parsedRow.category || 
+                    !parsedRow.datetime || !parsedRow.money || !parsedRow.description) {
+                    logger.warn(`Skipping row ${i + j + 2}: missing required field values`);
+                    continue;
+                }
+                
+                parsedChunk.push(parsedRow);
+                
+            } catch (error) {
+                logger.warn(`Skipping row ${i + j + 2}: ${error.message}`);
+            }
+        }
+        
+        if (parsedChunk.length > 0) {
+            yield parsedChunk;
+        }
+    }
+    
+    logger.info(`CSV processing completed with chunked approach (chunk size: ${chunkSize})`);
 }
