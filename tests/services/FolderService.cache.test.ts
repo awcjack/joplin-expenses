@@ -10,15 +10,24 @@ jest.mock('api', () => ({
 }));
 
 import { FolderService } from '../../src/services/FolderService';
-import joplin from 'api';
+
+// Create a local mock for this test file
+const mockJoplin = {
+    data: {
+        get: jest.fn(),
+        post: jest.fn(),
+        put: jest.fn()
+    }
+};
+
+// Set global joplin for this test
+(global as any).joplin = mockJoplin;
 
 describe('FolderService Caching', () => {
     let folderService: FolderService;
-    let mockJoplin: any;
 
     beforeEach(() => {
         folderService = FolderService.getInstance();
-        mockJoplin = joplin as any;
         
         // Reset all mocks
         jest.clearAllMocks();
