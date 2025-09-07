@@ -155,9 +155,65 @@ export function getNextMonth(yearMonth: string): string {
 }
 
 /**
- * Parse date string and return Date object
+ * Parse date string and return Date object, treating dates without timezone according to the specified timezone preference
  */
-export function parseDate(dateStr: string): Date {
+export function parseDate(dateStr: string, timezonePreference: string = 'local'): Date {
     if (!dateStr) return new Date();
+    
+    // Check if the date string has timezone information
+    const hasTimezone = dateStr.includes('Z') || /[+-]\d{2}:\d{2}/.test(dateStr);
+    
+    if (hasTimezone) {
+        // Date has timezone info, parse normally
+        return new Date(dateStr);
+    }
+    
+    // Handle date without timezone based on preference
+    if (timezonePreference === 'UTC') {
+        // Force UTC interpretation by adding Z suffix
+        let utcStr = dateStr;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+            utcStr = dateStr + 'T00:00:00.000Z';
+        } else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(dateStr)) {
+            utcStr = dateStr + '.000Z';
+        }
+        return new Date(utcStr);
+    } else if (timezonePreference === 'local' || !timezonePreference) {
+        // Date without timezone - treat as local time
+        // For YYYY-MM-DD format, ensure it's treated as local date
+        if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+            const [year, month, day] = dateStr.split('-').map(Number);
+            return new Date(year, month - 1, day); // month is 0-based
+        }
+        
+        // For YYYY-MM-DDTHH:mm:ss format without timezone, treat as local
+        if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(dateStr)) {
+            const [datePart, timePart] = dateStr.split('T');
+            const [year, month, day] = datePart.split('-').map(Number);
+            const [hour, minute, second] = timePart.split(':').map(Number);
+            return new Date(year, month - 1, day, hour, minute, second || 0); // month is 0-based
+        }
+    } else if (/^[+-]\d{1,2}$/.test(timezonePreference)) {
+        // Handle timezone offset format like '+8', '-5', etc.
+        const offsetHours = parseInt(timezonePreference, 10);
+        let utcStr = dateStr;
+        
+        if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+            utcStr = dateStr + 'T00:00:00.000Z';
+        } else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(dateStr)) {
+            utcStr = dateStr + '.000Z';
+        }
+        
+        // Parse as UTC then adjust for the offset
+        const utcDate = new Date(utcStr);
+        utcDate.setHours(utcDate.getHours() - offsetHours); // Subtract offset to get the intended local time
+        return utcDate;
+    } else {
+        // For other formats, fallback to local time
+        console.warn(`Timezone '${timezonePreference}' not supported, using local time`);
+        return parseDate(dateStr, 'local');
+    }
+    
+    // Fallback to normal parsing for other formats
     return new Date(dateStr);
 }
