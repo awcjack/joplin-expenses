@@ -26,6 +26,44 @@ A comprehensive expense tracking plugin for Joplin with structured folder organi
 - **Smart Autocomplete**: Category suggestions in markdown and rich text editors
 - **Auto-Sorting**: Expenses automatically sorted by date in descending order (newest first)
 
+## Screenshots
+
+### Plugin Interface & Folder Structure
+![Auto-Generated Summary](screenshots/plugin-summary-view-1.png)
+![Auto-Generated Summary](screenshots/plugin-summary-view-2.png)
+![Auto-Generated Summary](screenshots/plugin-summary-view-3.png)
+*Auto-generated expense summary with visual charts, category breakdown, and organized folder structure in the sidebar*
+
+![Expense Table View](screenshots/plugin-table-view.png)
+*Clean expense table interface showing categorized transactions with the monthly folder structure visible in the sidebar*
+
+![Plugin Settings](screenshots/plugin-settings.png)
+*Plugin settings panel showing customizable categories, folder configuration, and other preferences*
+
+### Key Features Demonstrated
+
+**✨ Auto-Generated Summaries**
+- Colorful summary sections with total expenses, income, and net amount
+- Category-wise breakdown with detailed amounts
+- Interactive Mermaid charts showing expense distribution
+- Professional styling with red accent color scheme
+
+**📁 Organized Structure** 
+- Hierarchical folder structure: `expenses/2025/01`, `02`, etc.
+- Monthly documents (01-12) under each year folder
+- Clean sidebar navigation showing expense organization
+
+**📊 Smart Table Management**
+- Well-formatted expense tables with proper columns
+- Auto-sorted by date (newest first)
+- Category-based organization (food, transport, entertainment, shopping)
+- Real transaction data with shops, dates, and amounts
+
+**🎯 Professional Interface**
+- Clean, modern interface integrated seamlessly with Joplin
+- Dark theme compatibility
+- Intuitive layout with clear visual hierarchy
+
 ## Usage
 
 ### Quick Start
