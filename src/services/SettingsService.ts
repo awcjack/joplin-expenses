@@ -92,6 +92,42 @@ export class SettingsService {
                 public: true,
                 label: 'Autocomplete Keybind',
                 description: 'Keyboard shortcut to apply autocomplete suggestion (e.g., Ctrl+Enter, Alt+Tab)'
+            },
+            'expenses.defaultTimezone': {
+                value: DEFAULT_SETTINGS.defaultTimezone,
+                type: SettingItemType.String,
+                section: 'expensesSettings',
+                public: true,
+                label: 'Default Timezone Offset',
+                description: 'Default timezone offset for dates without timezone info',
+                options: {
+                    'local': 'Local time (auto-detect)',
+                    'UTC': 'UTC (GMT+0)',
+                    '-12': 'UTC-12',
+                    '-11': 'UTC-11',
+                    '-10': 'UTC-10',
+                    '-9': 'UTC-9',
+                    '-8': 'UTC-8 (PST)',
+                    '-7': 'UTC-7 (MST)',
+                    '-6': 'UTC-6 (CST)', 
+                    '-5': 'UTC-5 (EST)',
+                    '-4': 'UTC-4',
+                    '-3': 'UTC-3',
+                    '-2': 'UTC-2',
+                    '-1': 'UTC-1',
+                    '+1': 'UTC+1 (CET)',
+                    '+2': 'UTC+2 (EET)',
+                    '+3': 'UTC+3',
+                    '+4': 'UTC+4',
+                    '+5': 'UTC+5',
+                    '+6': 'UTC+6',
+                    '+7': 'UTC+7',
+                    '+8': 'UTC+8 (CST)',
+                    '+9': 'UTC+9 (JST)',
+                    '+10': 'UTC+10',
+                    '+11': 'UTC+11',
+                    '+12': 'UTC+12'
+                }
             }
         });
     }
@@ -106,7 +142,8 @@ export class SettingsService {
             'expenses.autoProcessNewExpenses',
             'expenses.folderPath',
             'expenses.defaultCurrency',
-            'expenses.autocompleteKeybind'
+            'expenses.autocompleteKeybind',
+            'expenses.defaultTimezone'
         ]);
         
         const categoriesStr = (settings['expenses.categories'] as string) || DEFAULT_SETTINGS.categories.join(',');
@@ -115,6 +152,7 @@ export class SettingsService {
         const folderPath = (settings['expenses.folderPath'] as string) || DEFAULT_SETTINGS.expensesFolderPath;
         const defaultCurrency = (settings['expenses.defaultCurrency'] as string) || DEFAULT_SETTINGS.defaultCurrency;
         const autocompleteKeybind = (settings['expenses.autocompleteKeybind'] as string) || DEFAULT_SETTINGS.autocompleteKeybind;
+        const defaultTimezone = (settings['expenses.defaultTimezone'] as string) || DEFAULT_SETTINGS.defaultTimezone;
 
         // Sanitize loaded categories to prevent injection attacks
         const rawCategories = categoriesStr.split(',').map(c => c.trim()).filter(c => c.length > 0);
@@ -128,7 +166,8 @@ export class SettingsService {
             autoProcessNewExpenses: autoProcessNewExpenses !== undefined ? autoProcessNewExpenses : DEFAULT_SETTINGS.autoProcessNewExpenses,
             expensesFolderPath: folderPath,
             defaultCurrency: defaultCurrency,
-            autocompleteKeybind: autocompleteKeybind
+            autocompleteKeybind: autocompleteKeybind,
+            defaultTimezone: defaultTimezone
         };
     }
 

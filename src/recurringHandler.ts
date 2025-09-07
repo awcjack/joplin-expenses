@@ -4,7 +4,10 @@ import joplin from 'api';
 import { ExpenseEntry, RecurrenceType } from './types';
 import { FolderService } from './services/FolderService';
 import { ExpenseService } from './services/ExpenseService';
+import { SettingsService } from './services/SettingsService';
+import { SummaryService } from './services/SummaryService';
 import { getCurrentDateTime, parseDate } from './utils/dateUtils';
+import { getTargetYearMonth } from './expenseParser';
 import { logger, safeErrorMessage } from './utils/logger';
 
 export type Recurrence = 'daily' | 'weekly' | 'monthly' | 'yearly' | '';
@@ -27,9 +30,13 @@ export class RecurringExpenseHandler {
     private static instance: RecurringExpenseHandler;
     private folderService: FolderService;
     private expenseService: ExpenseService;
+    private settingsService: SettingsService;
+    private summaryService: SummaryService;
 
     private constructor() {
         this.folderService = FolderService.getInstance();
+        this.settingsService = SettingsService.getInstance();
+        this.summaryService = SummaryService.getInstance();
         // Initialize expenseService lazily to avoid circular dependency
         this.expenseService = null as any;
     }
@@ -46,6 +53,13 @@ export class RecurringExpenseHandler {
             RecurringExpenseHandler.instance = new RecurringExpenseHandler();
         }
         return RecurringExpenseHandler.instance;
+    }
+
+    /**
+     * Get timezone preference from settings
+     */
+    private getTimezonePreference(): string {
+        return this.settingsService.getSettings().defaultTimezone;
     }
 
     /**
@@ -105,20 +119,62 @@ export class RecurringExpenseHandler {
         }
 
         const now = new Date();
-        const dueDate = parseDate(recurringEntry.nextDue);
+        const dueDate = parseDate(recurringEntry.nextDue, this.getTimezonePreference());
         
         return now >= dueDate;
     }
 
     /**
+     * Calculate all missed occurrences between a start date and now
+     */
+    calculateMissedOccurrences(startDate: Date, recurrence: Recurrence, maxBackfill: number = 24): Date[] {
+        const occurrences: Date[] = [];
+        const now = new Date();
+        let currentDate = new Date(startDate);
+        let count = 0;
+
+        console.log(`🔄 BACKFILL: Calculating missed occurrences from ${startDate.toISOString()} with ${recurrence} recurrence`);
+
+        while (currentDate <= now && count < maxBackfill) {
+            if (currentDate < now) {
+                occurrences.push(new Date(currentDate));
+                console.log(`🔄 BACKFILL: Added occurrence: ${currentDate.toISOString()}`);
+            }
+            
+            currentDate = this.calculateNextOccurrence(currentDate, recurrence);
+            count++;
+        }
+
+        console.log(`🔄 BACKFILL: Found ${occurrences.length} missed occurrences (max ${maxBackfill})`);
+        return occurrences;
+    }
+
+    /**
      * Create a new expense entry from a recurring template
      */
-    createExpenseFromRecurring(recurringEntry: RecurringExpenseEntry): ExpenseEntry {
+    createExpenseFromRecurring(recurringEntry: RecurringExpenseEntry, specificDate?: Date): ExpenseEntry {
+        let useDate: string;
+        
+        if (specificDate) {
+            // Preserve the local date/time instead of converting to UTC
+            // Format as YYYY-MM-DDTHH:mm:ss to maintain the intended local date
+            const year = specificDate.getFullYear();
+            const month = String(specificDate.getMonth() + 1).padStart(2, '0');
+            const day = String(specificDate.getDate()).padStart(2, '0');
+            const hours = String(specificDate.getHours()).padStart(2, '0');
+            const minutes = String(specificDate.getMinutes()).padStart(2, '0');
+            const seconds = String(specificDate.getSeconds()).padStart(2, '0');
+            
+            useDate = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+        } else {
+            useDate = getCurrentDateTime();
+        }
+        
         return {
             price: recurringEntry.price,
             description: recurringEntry.description,
             category: recurringEntry.category,
-            date: getCurrentDateTime(),
+            date: useDate,
             shop: recurringEntry.shop,
             attachment: recurringEntry.attachment,
             recurring: '' // New entries don't inherit recurring behavior
@@ -132,7 +188,7 @@ export class RecurringExpenseHandler {
         const now = new Date();
         // Calculate next occurrence from the current nextDue date, not from now
         // This ensures consistent scheduling even if processing is delayed
-        const currentDue = parseDate(recurringEntry.nextDue);
+        const currentDue = parseDate(recurringEntry.nextDue, this.getTimezonePreference());
         const nextDue = this.calculateNextOccurrence(currentDue, recurringEntry.recurring as Recurrence);
         
         console.log(`🔄 CALC: Updating recurring expense "${recurringEntry.description}": ${recurringEntry.nextDue} -> ${nextDue.toISOString()}`);
@@ -173,29 +229,116 @@ export class RecurringExpenseHandler {
                     if (this.isDue(recurringEntry)) {
                         logger.info(`Processing due recurring expense: ${recurringEntry.description}`);
                         
-                        logger.info(`Processing recurring expense: ${recurringEntry.description}, current nextDue: ${recurringEntry.nextDue}`);
+                        // Check if this is the first time processing this recurring expense
+                        const isFirstProcessing = !recurringEntry.lastProcessed || recurringEntry.lastProcessed === '';
+                        const originalDate = parseDate(recurringEntry.date, this.getTimezonePreference());
+                        const nextDueDate = parseDate(recurringEntry.nextDue, this.getTimezonePreference());
                         
-                        // Create new expense entry
-                        const newExpense = this.createExpenseFromRecurring(recurringEntry);
+                        let expensesToCreate: { expense: ExpenseEntry, date: Date }[] = [];
                         
-                        // Add to new-expenses document
-                        const addResult = await this.getExpenseService().addNewExpense(newExpense);
-                        
-                        if (addResult.success) {
-                            result.newExpenses.push(newExpense);
-                            result.created++;
+                        if (isFirstProcessing) {
+                            // For first-time processing, check for missed occurrences
+                            logger.info(`First-time processing for ${recurringEntry.description}, checking for backfill from ${originalDate.toISOString()}`);
                             
-                            // Update the recurring entry's next due date
+                            const missedOccurrences = this.calculateMissedOccurrences(
+                                originalDate, 
+                                recurringEntry.recurring as Recurrence,
+                                24 // Max 24 backfill entries to prevent overwhelming
+                            );
+                            
+                            // Create expenses for all missed occurrences
+                            for (const missedDate of missedOccurrences) {
+                                const expenseForDate = this.createExpenseFromRecurring(recurringEntry, missedDate);
+                                expensesToCreate.push({ expense: expenseForDate, date: missedDate });
+                            }
+                            
+                            // Also create one for the current due date if it's different from the last missed occurrence
+                            const now = new Date();
+                            if (nextDueDate <= now && !missedOccurrences.some(d => Math.abs(d.getTime() - nextDueDate.getTime()) < 86400000)) {
+                                const currentExpense = this.createExpenseFromRecurring(recurringEntry, nextDueDate);
+                                expensesToCreate.push({ expense: currentExpense, date: nextDueDate });
+                            }
+                        } else {
+                            // Regular processing - just create one for the current due date
+                            const newExpense = this.createExpenseFromRecurring(recurringEntry, nextDueDate);
+                            expensesToCreate.push({ expense: newExpense, date: nextDueDate });
+                        }
+                        
+                        logger.info(`Creating ${expensesToCreate.length} expense entries for ${recurringEntry.description}`);
+                        
+                        let successCount = 0;
+                        let lastSuccessDate = nextDueDate;
+                        
+                        // Group expenses by year-month for efficient processing
+                        const expensesByYearMonth = new Map<string, { expense: ExpenseEntry, date: Date }[]>();
+                        
+                        for (const expenseEntry of expensesToCreate) {
+                            const yearMonth = getTargetYearMonth(expenseEntry.expense);
+                            if (!expensesByYearMonth.has(yearMonth)) {
+                                expensesByYearMonth.set(yearMonth, []);
+                            }
+                            expensesByYearMonth.get(yearMonth)!.push(expenseEntry);
+                        }
+                        
+                        // Process each group by moving directly to monthly documents (skip summary generation)
+                        for (const [yearMonth, groupExpenses] of expensesByYearMonth) {
+                            try {
+                                const expenses = groupExpenses.map(g => g.expense);
+                                await this.getExpenseService().moveExpensesToMonth(expenses, yearMonth, true); // Skip summary generation
+                                
+                                // Track success
+                                for (const { expense, date } of groupExpenses) {
+                                    result.newExpenses.push(expense);
+                                    result.created++;
+                                    successCount++;
+                                    lastSuccessDate = date;
+                                    logger.info(`Successfully created expense for ${date.toISOString()}: ${expense.description} in ${yearMonth}`);
+                                }
+                            } catch (error) {
+                                // Track failures for this group
+                                for (const { date } of groupExpenses) {
+                                    result.errors.push(`Failed to create expense for ${date.toISOString()} from recurring "${recurringEntry.description}" in ${yearMonth}: ${error.message}`);
+                                }
+                            }
+                        }
+                        
+                        // Update the recurring entry's next due date
+                        if (successCount > 0) {
                             console.log('🔄 PROCESS: About to update recurring entry:', recurringEntry.description);
-                            console.log('🔄 PROCESS: Current nextDue before update:', recurringEntry.nextDue);
-                            const updatedRecurring = this.updateRecurringEntry(recurringEntry);
-                            console.log('🔄 PROCESS: Updated recurring entry calculated, new nextDue:', updatedRecurring.nextDue);
+                            console.log('🔄 PROCESS: Last success date:', lastSuccessDate.toISOString());
+                            
+                            const now = new Date();
+                            let nextOccurrence: Date;
+                            
+                            if (isFirstProcessing) {
+                                // For first-time processing with backfill, calculate next due from current time
+                                // Find the next occurrence that would be after now
+                                const originalDate = parseDate(recurringEntry.date, this.getTimezonePreference());
+                                let candidateDate = new Date(originalDate);
+                                
+                                // Keep advancing until we get a future date
+                                while (candidateDate <= now) {
+                                    candidateDate = this.calculateNextOccurrence(candidateDate, recurringEntry.recurring as Recurrence);
+                                }
+                                nextOccurrence = candidateDate;
+                                console.log('🔄 PROCESS: First-time processing - next due calculated from current time:', nextOccurrence.toISOString());
+                            } else {
+                                // Regular processing - calculate from the last success date
+                                nextOccurrence = this.calculateNextOccurrence(lastSuccessDate, recurringEntry.recurring as Recurrence);
+                                console.log('🔄 PROCESS: Regular processing - next due calculated from last success:', nextOccurrence.toISOString());
+                            }
+                            
+                            const updatedRecurring: RecurringExpenseEntry = {
+                                ...recurringEntry,
+                                lastProcessed: now.toISOString(),
+                                nextDue: nextOccurrence.toISOString()
+                            };
+                            
+                            console.log('🔄 PROCESS: Final nextDue calculated:', updatedRecurring.nextDue);
                             
                             await this.updateRecurringExpense(updatedRecurring);
                             
-                            logger.info(`Successfully created and updated recurring expense: ${newExpense.description}`);
-                        } else {
-                            result.errors.push(`Failed to create expense from recurring "${recurringEntry.description}": ${addResult.errors.join(', ')}`);
+                            logger.info(`Successfully processed ${successCount} expenses and updated recurring entry: ${recurringEntry.description}`);
                         }
                         
                         result.processed++;
@@ -204,6 +347,12 @@ export class RecurringExpenseHandler {
                     result.errors.push(`Error processing recurring expense "${recurringEntry.description}": ${safeErrorMessage(error)}`);
                     logger.error('Error processing individual recurring expense', error);
                 }
+            }
+
+            // Generate summaries for all affected months/years after all recurring expenses are processed
+            if (result.created > 0) {
+                logger.info('Generating summaries for all affected documents after recurring expense processing...');
+                await this.refreshSummariesAfterRecurringProcessing(result.newExpenses);
             }
 
             logger.info(`Recurring processing completed: ${result.created} created, ${result.processed} processed, ${result.errors.length} errors`);
@@ -236,12 +385,10 @@ export class RecurringExpenseHandler {
     parseRecurringExpensesTable(markdown: string): RecurringExpenseEntry[] {
         const lines = markdown.split('\n');
         const entries: RecurringExpenseEntry[] = [];
-        let headerIdx = -1;
 
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i].trim();
             if (line.startsWith('|') && line.includes('recurring') && line.includes('nextDue')) {
-                headerIdx = i;
                 let dataIdx = i + 2; // Skip header and separator
                 
                 while (dataIdx < lines.length && lines[dataIdx].trim().startsWith('|')) {
@@ -460,16 +607,75 @@ export class RecurringExpenseHandler {
      * Convert regular expense entry to recurring expense entry
      */
     convertToRecurringExpense(expense: ExpenseEntry, recurring: Recurrence, sourceNoteId?: string): RecurringExpenseEntry {
-        const now = new Date();
-        const nextDue = this.calculateNextOccurrence(now, recurring);
+        const expenseDate = parseDate(expense.date, this.getTimezonePreference());
+        
+        // Set nextDue to the original expense date for first-time processing
+        // This allows backfilling from the original date when first processed
+        const nextDue = expenseDate;
         
         return {
             ...expense,
             recurring,
-            lastProcessed: now.toISOString(),
+            lastProcessed: '', // Empty to indicate first-time processing needed
             nextDue: nextDue.toISOString(),
             enabled: true,
             sourceNoteId
         };
+    }
+
+    /**
+     * Refresh summaries for all months/years affected by recurring expense processing
+     */
+    private async refreshSummariesAfterRecurringProcessing(newExpenses: ExpenseEntry[]): Promise<void> {
+        try {
+            // Group expenses by year-month to identify affected documents
+            const affectedMonths = new Set<string>();
+            const affectedYears = new Set<string>();
+            
+            for (const expense of newExpenses) {
+                const yearMonth = getTargetYearMonth(expense);
+                const year = yearMonth.split('-')[0];
+                
+                affectedMonths.add(yearMonth);
+                affectedYears.add(year);
+            }
+            
+            logger.info(`Refreshing summaries for ${affectedMonths.size} months across ${affectedYears.size} years`);
+            
+            // Refresh monthly summaries
+            for (const yearMonth of affectedMonths) {
+                try {
+                    const [year, month] = yearMonth.split('-');
+                    const folderStructure = await this.folderService.getFolderStructure(year);
+                    const monthlyNoteId = await this.folderService.findNoteInFolder(folderStructure.yearFolder, month);
+                    
+                    if (monthlyNoteId) {
+                        await this.summaryService.onNoteSaved(monthlyNoteId);
+                        logger.info(`Updated monthly summary for ${yearMonth}`);
+                    }
+                } catch (error) {
+                    logger.warn(`Failed to update monthly summary for ${yearMonth}:`, error);
+                }
+            }
+            
+            // Refresh annual summaries
+            for (const year of affectedYears) {
+                try {
+                    const folderStructure = await this.folderService.getFolderStructure(year);
+                    const annualSummaryId = folderStructure.annualSummary;
+                    
+                    if (annualSummaryId) {
+                        await this.summaryService.onNoteSaved(annualSummaryId);
+                        logger.info(`Updated annual summary for ${year}`);
+                    }
+                } catch (error) {
+                    logger.warn(`Failed to update annual summary for ${year}:`, error);
+                }
+            }
+            
+            logger.info(`Summary refresh completed for recurring expense processing`);
+        } catch (error) {
+            logger.error('Failed to refresh summaries after recurring processing:', error);
+        }
     }
 }
