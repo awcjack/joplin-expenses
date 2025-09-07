@@ -289,8 +289,9 @@ async function addNewExpenseCommand() {
 	try {
 		const categories = settingsService.getCategories();
 		
-		// Create simple dialog for quick expense entry
-		const dialogId = await joplin.views.dialogs.create('quick-expense-dialog');
+		// Create simple dialog for quick expense entry with unique ID
+		const timestamp = Date.now();
+		const dialogId = await joplin.views.dialogs.create(`quick-expense-dialog-${timestamp}`);
 		
 		// Sanitize categories to prevent HTML injection
 		const safeCategories = categories.map(cat => escapeHtml(cat));
@@ -521,7 +522,8 @@ async function manageCategoriesCommand() {
 	try {
 		const categories = settingsService.getCategories();
 		
-		const dialogId = await joplin.views.dialogs.create('manage-categories-dialog');
+		const timestamp = Date.now();
+		const dialogId = await joplin.views.dialogs.create(`manage-categories-dialog-${timestamp}`);
 		
 		// Sanitize categories for display in textarea
 		const safeCategories = categories.map(cat => escapeHtml(cat));
@@ -1070,7 +1072,8 @@ async function showMemoryStatsCommand() {
 		message += `  • Click "Force Cleanup" to clear expired caches\n`;
 		message += `  • Click "Emergency Cleanup" to clear all caches\n`;
 		
-		const dialogId = await joplin.views.dialogs.create('memory-stats-dialog');
+		const timestamp = Date.now();
+		const dialogId = await joplin.views.dialogs.create(`memory-stats-dialog-${timestamp}`);
 		await joplin.views.dialogs.setHtml(dialogId, `
 			<div style="padding: 15px; font-family: monospace; white-space: pre-line; max-height: 70vh; overflow-y: auto;">
 				${message.replace(/\n/g, '<br>').replace(/ /g, '&nbsp;')}
