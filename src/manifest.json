@@ -6,11 +6,17 @@
 	"name": "money-tracker",
 	"description": "tracking expenses and incomes",
 	"author": "awcjack",
-	"homepage_url": "",
+	"homepage_url": "https://github.com/awcjack/joplin-expenses",
 	"repository_url": "https://github.com/awcjack/joplin-expenses",
-	"keywords": [],
-	"categories": [],
-	"screenshots": [],
+	"keywords": ["expenses", "money", "tracker", "budget", "finance", "accounting", "income", "spending", "personal finance", "expense tracking"],
+	"categories": ["productivity", "personal finance"],
+	"screenshots": [
+		"screenshots/plugin-summary-view-1.png",
+		"screenshots/plugin-summary-view-2.png",
+		"screenshots/plugin-summary-view-3.png",
+		"screenshots/plugin-table-view.png",
+		"screenshots/plugin-settings.png"
+	],
 	"icons": {},
 	"promo_tile": {}
 }
