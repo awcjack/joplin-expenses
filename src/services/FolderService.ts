@@ -769,6 +769,16 @@ This document tracks recurring expense templates that automatically generate new
             this.enforceCacheSizeLimits();
         }, this.LOCK_CLEANUP_INTERVAL);
     }
+    
+    /**
+     * Stop periodic lock cleanup and clear timer
+     */
+    public stopLockCleanup(): void {
+        if (this.lockCleanupTimer) {
+            clearInterval(this.lockCleanupTimer);
+            this.lockCleanupTimer = null;
+        }
+    }
 
     /**
      * Clean up completed or stale operation locks

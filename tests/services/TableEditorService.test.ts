@@ -1,5 +1,5 @@
-// Mock joplin API
-const mockJoplin = {
+// Mock joplin API for table editor
+const mockTableJoplin = {
     data: {
         get: jest.fn(),
         put: jest.fn()
@@ -15,18 +15,18 @@ const mockJoplin = {
     }
 };
 
-// Mock services
-const mockSettingsService = {
+// Mock settings service for table editor
+const mockTableSettingsService = {
     getCategories: jest.fn().mockReturnValue(['food', 'transport', 'utilities', 'other'])
 };
 
 // Mock global joplin
-(global as any).joplin = mockJoplin;
+(global as any).joplin = mockTableJoplin;
 
 // Mock service imports
 jest.mock('../../src/services/SettingsService', () => ({
     SettingsService: {
-        getInstance: () => mockSettingsService
+        getInstance: () => mockTableSettingsService
     }
 }));
 
@@ -56,8 +56,8 @@ describe('TableEditorService', () => {
         // Default successful mocks
         mockCreateExpenseTable.mockReturnValue('| price | description | category | date | shop | attachment | recurring |\n|-------|-------------|----------|------|------|------------|-----------|');
         mockSortExpensesByDate.mockImplementation((expenses) => expenses);
-        mockJoplin.views.dialogs.create.mockResolvedValue('dialog-id');
-        mockJoplin.views.dialogs.open.mockResolvedValue({ id: 'cancel' });
+        mockTableJoplin.views.dialogs.create.mockResolvedValue('dialog-id');
+        mockTableJoplin.views.dialogs.open.mockResolvedValue({ id: 'cancel' });
     });
 
     describe('table editor workflow tests', () => {
@@ -74,16 +74,16 @@ describe('TableEditorService', () => {
         ];
 
         it('should follow workflow for table editor dialog creation', async () => {
-            mockJoplin.data.get.mockResolvedValue({
+            mockTableJoplin.data.get.mockResolvedValue({
                 body: '# Test Document\n\nTable content'
             });
             mockParseExpenseTables.mockReturnValue(testExpenses);
 
             // Test the workflow components
-            const note = await mockJoplin.data.get(['notes', 'test-note-id'], { fields: ['body'] });
+            const note = await mockTableJoplin.data.get(['notes', 'test-note-id'], { fields: ['body'] });
             const expenses = mockParseExpenseTables(note.body);
-            const categories = mockSettingsService.getCategories();
-            const dialogId = await mockJoplin.views.dialogs.create('table-editor-dialog');
+            const categories = mockTableSettingsService.getCategories();
+            const dialogId = await mockTableJoplin.views.dialogs.create('table-editor-dialog');
 
             expect(note.body).toContain('Test Document');
             expect(expenses).toEqual(testExpenses);
@@ -92,14 +92,14 @@ describe('TableEditorService', () => {
         });
 
         it('should handle dialog setup and buttons', async () => {
-            await mockJoplin.views.dialogs.setHtml('dialog-id', '<html>content</html>');
-            await mockJoplin.views.dialogs.setButtons('dialog-id', [
+            await mockTableJoplin.views.dialogs.setHtml('dialog-id', '<html>content</html>');
+            await mockTableJoplin.views.dialogs.setButtons('dialog-id', [
                 { id: 'save', title: 'Save Changes' },
                 { id: 'cancel', title: 'Cancel' }
             ]);
 
-            expect(mockJoplin.views.dialogs.setHtml).toHaveBeenCalledWith('dialog-id', '<html>content</html>');
-            expect(mockJoplin.views.dialogs.setButtons).toHaveBeenCalledWith('dialog-id', [
+            expect(mockTableJoplin.views.dialogs.setHtml).toHaveBeenCalledWith('dialog-id', '<html>content</html>');
+            expect(mockTableJoplin.views.dialogs.setButtons).toHaveBeenCalledWith('dialog-id', [
                 { id: 'save', title: 'Save Changes' },
                 { id: 'cancel', title: 'Cancel' }
             ]);
@@ -117,13 +117,13 @@ describe('TableEditorService', () => {
                 }
             };
 
-            mockJoplin.views.dialogs.open.mockResolvedValue({
+            mockTableJoplin.views.dialogs.open.mockResolvedValue({
                 id: 'save',
                 formData: formData
             });
 
             // Test form processing workflow
-            const result = await mockJoplin.views.dialogs.open('dialog-id');
+            const result = await mockTableJoplin.views.dialogs.open('dialog-id');
             if (result.id === 'save' && result.formData) {
                 const expenseData = result.formData['table-editor-form'];
                 expect(expenseData['expense-0-description']).toBe('Updated Coffee');
@@ -285,22 +285,22 @@ describe('TableEditorService', () => {
 
     describe('error handling', () => {
         it('should handle API errors', async () => {
-            mockJoplin.data.get.mockRejectedValue(new Error('API Error'));
+            mockTableJoplin.data.get.mockRejectedValue(new Error('API Error'));
 
             try {
-                await mockJoplin.data.get(['notes', 'test-id'], { fields: ['body'] });
+                await mockTableJoplin.data.get(['notes', 'test-id'], { fields: ['body'] });
             } catch (error) {
                 expect(error.message).toBe('API Error');
             }
 
-            expect(mockJoplin.data.get).toHaveBeenCalled();
+            expect(mockTableJoplin.data.get).toHaveBeenCalled();
         });
 
         it('should handle dialog creation errors', async () => {
-            mockJoplin.views.dialogs.create.mockRejectedValue(new Error('Dialog creation failed'));
+            mockTableJoplin.views.dialogs.create.mockRejectedValue(new Error('Dialog creation failed'));
 
             try {
-                await mockJoplin.views.dialogs.create('test-dialog');
+                await mockTableJoplin.views.dialogs.create('test-dialog');
             } catch (error) {
                 expect(error.message).toBe('Dialog creation failed');
             }

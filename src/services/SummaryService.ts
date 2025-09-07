@@ -82,6 +82,16 @@ export class SummaryService {
     }
     
     /**
+     * Stop periodic memory cleanup and clear timer
+     */
+    public stopMemoryCleanup(): void {
+        if (this.memoryCleanupTimer) {
+            clearInterval(this.memoryCleanupTimer);
+            this.memoryCleanupTimer = null;
+        }
+    }
+    
+    /**
      * Clean up expired cache entries to free memory
      */
     private cleanupExpiredCacheEntries(): void {

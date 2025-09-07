@@ -38,6 +38,13 @@ describe('FolderService Caching', () => {
         (folderService as any).settingsService = mockSettingsService;
     });
 
+    afterEach(() => {
+        // Stop timers to prevent Jest from hanging
+        if (folderService) {
+            folderService.stopLockCleanup();
+        }
+    });
+
     describe('getAllExpenseStructure caching', () => {
         beforeEach(() => {
             // Mock the main expenses folder lookup

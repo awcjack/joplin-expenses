@@ -55,6 +55,13 @@ describe('SummaryService', () => {
         summaryService = SummaryService.getInstance();
     });
 
+    afterEach(() => {
+        // Stop timers to prevent Jest from hanging
+        if (summaryService) {
+            summaryService.stopMemoryCleanup();
+        }
+    });
+
     describe('generateSummary', () => {
         it('should calculate totals correctly', () => {
             const entries: ExpenseEntry[] = [

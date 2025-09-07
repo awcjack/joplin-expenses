@@ -1,4 +1,5 @@
 import { SummaryService } from '../../src/services/SummaryService';
+import { FolderService } from '../../src/services/FolderService';
 import { ExpenseEntry } from '../../src/types';
 
 // Mock services
@@ -73,6 +74,19 @@ describe('SummaryService Caching', () => {
 
         mockExpenseService.getMonthlyExpenses.mockResolvedValue(mockMonthlyExpenses);
         mockExpenseService.getYearlyExpenses.mockResolvedValue(mockYearlyExpenses);
+    });
+
+    afterEach(() => {
+        // Stop timers to prevent Jest from hanging
+        if (summaryService) {
+            summaryService.stopMemoryCleanup();
+        }
+        
+        // Also cleanup the real FolderService singleton instance that was created
+        const folderService = FolderService.getInstance();
+        if (folderService && typeof folderService.stopLockCleanup === 'function') {
+            folderService.stopLockCleanup();
+        }
     });
 
     describe('Monthly expenses caching', () => {
