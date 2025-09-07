@@ -4,6 +4,7 @@ import { parseExpenseTables, serializeExpenseTable, validateExpenseEntry, getTar
 import { FolderService } from './FolderService';
 import { SettingsService } from './SettingsService';
 import { RecurringExpenseHandler } from '../recurringHandler';
+import { SummaryService } from './SummaryService';
 import { getCurrentDateTime } from '../utils/dateUtils';
 import { sanitizeExpenseEntry } from '../utils/sanitization';
 import { logger, safeErrorMessage } from '../utils/logger';
@@ -13,10 +14,12 @@ export class ExpenseService {
     private folderService: FolderService;
     private settingsService: SettingsService;
     private recurringHandler: RecurringExpenseHandler;
+    private summaryService: SummaryService;
 
     private constructor() {
         this.folderService = FolderService.getInstance();
         this.settingsService = SettingsService.getInstance();
+        this.summaryService = SummaryService.getInstance();
         // Initialize recurringHandler lazily to avoid circular dependency
         this.recurringHandler = null as any;
     }
@@ -62,6 +65,13 @@ export class ExpenseService {
             // Update the document
             const updatedBody = this.updateExpenseTableInContent(note.body, existingEntries);
             await joplin.data.put(['notes', newExpensesNoteId], null, { body: updatedBody });
+
+            // Trigger summary generation for the updated new-expenses document
+            try {
+                await this.summaryService.onNoteSaved(newExpensesNoteId);
+            } catch (summaryError) {
+                logger.warn(`Failed to update summaries for new-expenses document:`, summaryError);
+            }
 
             logger.info('Successfully added new expense to new-expenses document');
             return { success: true, errors: [] };
@@ -176,7 +186,7 @@ export class ExpenseService {
     /**
      * Move a group of expenses to the appropriate monthly document
      */
-    private async moveExpensesToMonth(expenses: ExpenseEntry[], yearMonth: string): Promise<void> {
+    async moveExpensesToMonth(expenses: ExpenseEntry[], yearMonth: string, skipSummaryGeneration: boolean = false): Promise<void> {
         const [year, month] = yearMonth.split('-');
         
         // Ensure year structure exists
@@ -206,6 +216,26 @@ export class ExpenseService {
         // Update the monthly document
         const updatedBody = this.updateExpenseTableInContent(monthlyNote.body, existingExpenses);
         await joplin.data.put(['notes', monthlyNoteId], null, { body: updatedBody });
+        
+        // Trigger summary generation for the updated monthly document (unless skipped)
+        if (!skipSummaryGeneration) {
+            try {
+                await this.summaryService.onNoteSaved(monthlyNoteId);
+                logger.info(`Updated monthly summaries for ${yearMonth}`);
+                
+                // Also trigger annual summary update for the year
+                const folderStructure = await this.folderService.getFolderStructure(year);
+                const annualSummaryId = folderStructure.annualSummary;
+                if (annualSummaryId) {
+                    await this.summaryService.onNoteSaved(annualSummaryId);
+                    logger.info(`Updated annual summary for ${year}`);
+                }
+            } catch (summaryError) {
+                logger.warn(`Failed to update summaries for ${yearMonth}:`, summaryError);
+            }
+        } else {
+            logger.info(`Moved ${expenses.length} expenses to ${yearMonth} (summary generation skipped)`);
+        }
         
         logger.info(`Moved ${expenses.length} expenses to ${yearMonth}`);
     }
@@ -322,6 +352,13 @@ export class ExpenseService {
         const updatedBody = this.updateExpenseTableInContent(note.body, remainingExpenses);
         await joplin.data.put(['notes', noteId], null, { body: updatedBody });
         
+        // Trigger summary generation for the updated new-expenses document
+        try {
+            await this.summaryService.onNoteSaved(noteId);
+        } catch (summaryError) {
+            logger.warn(`Failed to update summaries for new-expenses document:`, summaryError);
+        }
+        
         logger.info(`Updated new-expenses document with ${remainingExpenses.length} remaining expenses`);
     }
 
@@ -334,6 +371,13 @@ export class ExpenseService {
         // Replace table content but keep the structure
         const clearedBody = this.updateExpenseTableInContent(note.body, []);
         await joplin.data.put(['notes', noteId], null, { body: clearedBody });
+        
+        // Trigger summary generation for the cleared new-expenses document
+        try {
+            await this.summaryService.onNoteSaved(noteId);
+        } catch (summaryError) {
+            logger.warn(`Failed to update summaries after clearing new-expenses document:`, summaryError);
+        }
         
         logger.info('Cleared new-expenses document');
     }
@@ -441,6 +485,13 @@ export class ExpenseService {
         const updatedBody = this.updateExpenseTableInContent(note.body, expenses);
         await joplin.data.put(['notes', monthlyNoteId], null, { body: updatedBody });
         
+        // Trigger summary generation for the updated monthly document
+        try {
+            await this.summaryService.onNoteSaved(monthlyNoteId);
+        } catch (summaryError) {
+            logger.warn(`Failed to update summaries after expense update:`, summaryError);
+        }
+        
         return { success: true, errors: [] };
     }
 
@@ -467,6 +518,13 @@ export class ExpenseService {
             const note = await joplin.data.get(['notes', monthlyNoteId], { fields: ['body'] });
             const updatedBody = this.updateExpenseTableInContent(note.body, filteredExpenses);
             await joplin.data.put(['notes', monthlyNoteId], null, { body: updatedBody });
+            
+            // Trigger summary generation for the updated monthly document
+            try {
+                await this.summaryService.onNoteSaved(monthlyNoteId);
+            } catch (summaryError) {
+                logger.warn(`Failed to update summaries after expense removal:`, summaryError);
+            }
         }
     }
 
@@ -487,6 +545,13 @@ export class ExpenseService {
             const note = await joplin.data.get(['notes', monthlyNoteId], { fields: ['body'] });
             const updatedBody = this.updateExpenseTableInContent(note.body, expenses);
             await joplin.data.put(['notes', monthlyNoteId], null, { body: updatedBody });
+            
+            // Trigger summary generation for the updated monthly document
+            try {
+                await this.summaryService.onNoteSaved(monthlyNoteId);
+            } catch (summaryError) {
+                logger.warn(`Failed to update summaries after expense addition:`, summaryError);
+            }
         }
     }
 
