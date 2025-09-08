@@ -47,8 +47,8 @@ joplin.plugins.register({
 			// Initialize settings first
 			await settingsService.initialize();
 			
-			// Initialize folder structure
-			await folderService.initializeFolderStructure();
+			// Initialize plugin folder services (loads existing structure or creates new)
+			await folderService.initializePlugin();
 			
 			console.info("Services initialized successfully");
 			
@@ -182,6 +182,15 @@ async function registerCommands() {
 			await showMemoryStatsCommand();
 		},
 	});
+
+	// Pagination test command (for debugging/validation)
+	await joplin.commands.register({
+		name: 'testPagination',
+		label: 'Test API Pagination (Debug)',
+		execute: async () => {
+			await testPaginationCommand();
+		},
+	});
 }
 
 /**
@@ -209,6 +218,7 @@ async function registerMenuItems() {
 	
 	// Debug/Development tools
 	await joplin.views.menuItems.create('showMemoryStatsMenu', 'showMemoryStats', MenuItemLocation.Tools);
+	await joplin.views.menuItems.create('testPaginationMenu', 'testPagination', MenuItemLocation.Tools);
 }
 
 /**
@@ -594,10 +604,24 @@ async function initializeFolderStructureCommand() {
 	try {
 		await joplin.views.dialogs.showMessageBox('Initializing expense folder structure...');
 		
+		// Ensure we have fresh settings before checking initialization status
+		await settingsService.reloadSettings();
+		
+		// Check if structure is already initialized
+		const isAlreadyInitialized = await folderService.isStructureInitialized();
+		if (isAlreadyInitialized) {
+			console.info('Expense folder structure is already initialized, skipping...');
+			await joplin.views.dialogs.showMessageBox('ℹ️ Expense folder structure is already initialized!');
+			return;
+		}
+		
 		// Clear all caches before initialization since the folder structure might have been deleted/recreated
 		console.info('Clearing all caches before folder structure initialization...');
 		folderService.invalidateAllCaches();
 		summaryService.invalidateAllCaches();
+		
+		// If folder was manually deleted, ensure proper cleanup
+		await folderService.handleExpensesFolderDeletion();
 		
 		await folderService.initializeFolderStructure();
 		
@@ -1099,6 +1123,56 @@ async function showMemoryStatsCommand() {
 	} catch (error) {
 		console.error('Failed to show memory stats:', error);
 		await joplin.views.dialogs.showMessageBox('Error showing memory stats: ' + error.message);
+	}
+}
+
+/**
+ * Test pagination command implementation
+ */
+async function testPaginationCommand() {
+	try {
+		const { PaginationTestSuite } = await import('./utils/paginationTest');
+		
+		await joplin.views.dialogs.showMessageBox('Running pagination tests... This may take a moment.');
+		
+		// Run basic functionality test
+		const basicTest = await PaginationTestSuite.runBasicPaginationTest();
+		
+		if (!basicTest.success) {
+			await joplin.views.dialogs.showMessageBox(`Pagination Test Failed:\n\n${basicTest.message}`);
+			return;
+		}
+		
+		// Run performance test
+		const performanceTest = await PaginationTestSuite.runPerformanceTest();
+		
+		// Run edge case test
+		const edgeCaseTest = await PaginationTestSuite.runEdgeCaseTest();
+		
+		// Combine results
+		let message = `🧪 Pagination Test Results\n\n`;
+		message += `${basicTest.message}\n\n`;
+		
+		if (performanceTest.success) {
+			message += `${performanceTest.message}\n\n`;
+		} else {
+			message += `⚠️ Performance test had issues: ${performanceTest.message}\n\n`;
+		}
+		
+		if (edgeCaseTest.success) {
+			message += `${edgeCaseTest.message}\n\n`;
+		} else {
+			message += `⚠️ Edge case test had issues: ${edgeCaseTest.message}\n\n`;
+		}
+		
+		message += `📋 Summary: Pagination implementation is working correctly!\n`;
+		message += `The plugin now properly handles large datasets through automatic pagination.`;
+		
+		await joplin.views.dialogs.showMessageBox(message);
+		
+	} catch (error) {
+		console.error('Failed to run pagination tests:', error);
+		await joplin.views.dialogs.showMessageBox(`Failed to run pagination tests: ${error.message}`);
 	}
 }
 

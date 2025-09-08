@@ -172,6 +172,13 @@ export class SettingsService {
     }
 
     /**
+     * Reload settings from Joplin storage
+     */
+    async reloadSettings(): Promise<void> {
+        await this.loadSettings();
+    }
+
+    /**
      * Get current settings
      */
     getSettings(): PluginSettings {

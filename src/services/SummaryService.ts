@@ -6,6 +6,7 @@ import { FolderService } from './FolderService';
 import { filterEntriesByYearMonth, filterEntriesByCategory } from '../expenseParser';
 import { formatMonthYear, getAllMonths } from '../utils/dateUtils';
 import { escapeHtml, sanitizeCategory } from '../utils/sanitization';
+import { getAllNotesInFolder } from '../utils/apiUtils';
 
 export class SummaryService {
     private static instance: SummaryService;

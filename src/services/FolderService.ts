@@ -2,6 +2,7 @@ import joplin from 'api';
 import { FolderStructure, FOLDER_NAMES } from '../types';
 import { getCurrentYear, getAllMonths, getMonthName } from '../utils/dateUtils';
 import { SettingsService } from './SettingsService';
+import { getAllFolders, getAllNotesInFolder, findNoteInFolderPaginated } from '../utils/apiUtils';
 
 export class FolderService {
     private static instance: FolderService;
@@ -72,6 +73,116 @@ export class FolderService {
     }
 
     /**
+     * Initialize the plugin by reading existing folder structure or creating it if needed
+     */
+    async initializePlugin(): Promise<void> {
+        console.info('Initializing plugin folder services...');
+        
+        try {
+            // Reload settings to ensure we have the latest configuration
+            await this.settingsService.reloadSettings();
+            
+            // Check if folder structure already exists
+            const structureExists = await this.isStructureInitialized();
+            
+            if (structureExists) {
+                console.info('Existing folder structure found, reading and caching...');
+                await this.loadExistingStructure();
+            } else {
+                console.info('No existing folder structure found, creating new structure...');
+                await this.initializeFolderStructure();
+            }
+            
+            console.info('Plugin folder services initialized successfully');
+        } catch (error) {
+            console.error('Failed to initialize plugin folder services:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Load existing folder structure and populate caches
+     */
+    private async loadExistingStructure(): Promise<void> {
+        console.info('Loading existing folder structure...');
+        
+        try {
+            // Clear all caches first to ensure fresh data
+            this.invalidateAllCaches();
+            
+            // Validate structure integrity before proceeding
+            const structureValid = await this.validateExistingStructure();
+            if (!structureValid) {
+                console.warn('Existing structure validation failed, will re-initialize');
+                await this.initializeFolderStructure();
+                return;
+            }
+            
+            // Refresh all caches with existing structure
+            await this.refreshCachesAfterInitialization();
+            
+            console.info('Existing folder structure loaded successfully');
+        } catch (error) {
+            console.error('Failed to load existing folder structure:', error);
+            // Fallback to initialization if loading fails
+            console.info('Attempting to re-initialize folder structure as fallback...');
+            await this.initializeFolderStructure();
+        }
+    }
+
+    /**
+     * Validate existing folder structure integrity (READ-ONLY - does not create anything)
+     */
+    private async validateExistingStructure(): Promise<boolean> {
+        try {
+            const settings = this.settingsService.getSettings();
+            const folderName = settings.expensesFolderPath;
+            
+            // 1. Check if main expenses folder exists (read-only)
+            const folders = await getAllFolders(['id', 'title']);
+            const expensesFolder = folders.find((f: any) => f.title === folderName);
+            
+            if (!expensesFolder) {
+                console.warn('Expenses folder not found during validation');
+                return false;
+            }
+            
+            // 2. Check if current year folder exists (read-only)
+            const currentYear = getCurrentYear();
+            const yearFolder = folders.find((f: any) => 
+                f.title === currentYear && f.parent_id === expensesFolder.id
+            );
+            
+            if (!yearFolder) {
+                console.warn('Year folder not found during validation');
+                return false;
+            }
+            
+            // 3. Check if new-expenses document exists (read-only)
+            const notesInFolder = await getAllNotesInFolder(expensesFolder.id, ['id', 'title', 'parent_id']);
+            const newExpensesNote = notesInFolder.find((n: any) => n.title === FOLDER_NAMES.NEW_EXPENSES);
+            
+            if (!newExpensesNote) {
+                console.warn('New-expenses document not found during validation');
+                return false;
+            }
+            
+            // 4. Validate document accessibility (read-only check)
+            const testNote = await joplin.data.get(['notes', newExpensesNote.id], { fields: ['id', 'title'] });
+            if (!testNote || !testNote.id) {
+                console.warn('New-expenses document not accessible during validation');
+                return false;
+            }
+            
+            console.info('Existing structure validation passed - all components found and accessible');
+            return true;
+        } catch (error) {
+            console.error('Structure validation failed:', error);
+            return false;
+        }
+    }
+
+    /**
      * Initialize the folder structure for expenses
      */
     async initializeFolderStructure(): Promise<void> {
@@ -95,10 +206,318 @@ export class FolderService {
             // Create recurring-expenses document
             await this.ensureRecurringExpensesDocumentExists();
             
+            // Update caches after successful initialization
+            console.info('Updating caches after successful initialization...');
+            await this.refreshCachesAfterInitialization();
+            
             console.info('Folder structure initialized successfully');
         } catch (error) {
             console.error('Failed to initialize folder structure:', error);
             throw error;
+        }
+    }
+
+    /**
+     * Refresh caches after successful initialization
+     */
+    private async refreshCachesAfterInitialization(): Promise<void> {
+        try {
+            console.info('Refreshing all caches after initialization...');
+            
+            // 1. Refresh folder structure cache (folders and notes)
+            await this.refreshExpenseStructureCache();
+            
+            // 2. Pre-warm expenses folder cache (read-only)
+            await this.preWarmExpensesFolderCache();
+            
+            // 3. Pre-warm year structure cache for current year (read-only)
+            const currentYear = getCurrentYear();
+            await this.preWarmYearStructureCache(currentYear);
+            
+            // 4. Pre-warm monthly document caches for current year
+            await this.preWarmMonthlyDocumentCaches(currentYear);
+            
+            // 5. Pre-warm new-expenses document cache
+            await this.preWarmNewExpensesCache();
+            
+            // 6. Pre-warm recurring-expenses document cache
+            await this.preWarmRecurringExpensesCache();
+            
+            console.info('All caches refreshed successfully after initialization');
+        } catch (error) {
+            console.error('Failed to refresh caches after initialization:', error);
+            // Don't throw - initialization was successful, cache warming is optional
+        }
+    }
+
+    /**
+     * Pre-warm the new-expenses document cache by finding and caching the document ID (READ-ONLY)
+     */
+    private async preWarmNewExpensesCache(): Promise<void> {
+        try {
+            const settings = this.settingsService.getSettings();
+            const folderName = settings.expensesFolderPath;
+            
+            // Find expenses folder without creating it
+            const folders = await getAllFolders(['id', 'title']);
+            const expensesFolder = folders.find((f: any) => f.title === folderName);
+            
+            if (!expensesFolder) {
+                console.warn('Cannot pre-warm new-expenses cache - expenses folder not found');
+                return;
+            }
+            
+            const noteTitle = FOLDER_NAMES.NEW_EXPENSES;
+            const cacheKey = `${expensesFolder.id}-${noteTitle}`;
+            
+            // Only query if not already cached
+            const cached = this.noteFindCache.get(cacheKey);
+            if (cached && (Date.now() - cached.timestamp) < this.CACHE_DURATION) {
+                return; // Already cached
+            }
+            
+            // Find the document (read-only)
+            const notesInFolder = await getAllNotesInFolder(expensesFolder.id, ['id', 'title', 'parent_id']);
+            const newExpensesNote = notesInFolder.find((n: any) => n.title === noteTitle);
+            
+            if (newExpensesNote) {
+                // Cache the document ID
+                this.noteFindCache.set(cacheKey, { noteId: newExpensesNote.id, timestamp: Date.now() });
+                this.enforceCacheSizeLimits();
+                console.info('Pre-warmed new-expenses document cache (read-only)');
+            } else {
+                console.warn('New-expenses document not found during cache pre-warming');
+            }
+        } catch (error) {
+            console.error('Failed to pre-warm new-expenses cache:', error);
+            // Don't throw - this is just cache optimization
+        }
+    }
+
+    /**
+     * Pre-warm expenses folder cache (READ-ONLY)
+     */
+    private async preWarmExpensesFolderCache(): Promise<void> {
+        try {
+            const settings = this.settingsService.getSettings();
+            const folderName = settings.expensesFolderPath;
+            
+            // Find expenses folder without creating it
+            const folders = await getAllFolders(['id', 'title']);
+            const expensesFolder = folders.find((f: any) => f.title === folderName);
+            
+            if (expensesFolder) {
+                // Cache the folder ID
+                this.expensesFolderIdCache = expensesFolder.id;
+                this.expensesFolderIdCacheTime = Date.now();
+                console.info('Pre-warmed expenses folder cache (read-only)');
+            } else {
+                console.warn('Expenses folder not found during cache pre-warming');
+            }
+        } catch (error) {
+            console.error('Failed to pre-warm expenses folder cache:', error);
+        }
+    }
+
+    /**
+     * Pre-warm year structure cache (READ-ONLY)
+     */
+    private async preWarmYearStructureCache(year: string): Promise<void> {
+        try {
+            const settings = this.settingsService.getSettings();
+            const folderName = settings.expensesFolderPath;
+            
+            // Find expenses folder and year folder without creating them
+            const folders = await getAllFolders(['id', 'title', 'parent_id']);
+            const expensesFolder = folders.find((f: any) => f.title === folderName);
+            
+            if (!expensesFolder) {
+                console.warn('Cannot pre-warm year structure cache - expenses folder not found');
+                return;
+            }
+            
+            const yearFolder = folders.find((f: any) => 
+                f.title === year && f.parent_id === expensesFolder.id
+            );
+            
+            if (yearFolder) {
+                // Find monthly notes for this year
+                const yearNotes = await getAllNotesInFolder(yearFolder.id, ['id', 'title', 'parent_id']);
+                const monthlyNotes = yearNotes.map((n: any) => n.id);
+                
+                // Find annual summary note
+                const expenseNotes = await getAllNotesInFolder(expensesFolder.id, ['id', 'title', 'parent_id']);
+                const annualSummaryNote = expenseNotes.find((n: any) => 
+                    n.title === `${year} Summary`
+                );
+                
+                // Cache the year structure
+                const structure = {
+                    expensesFolder: expensesFolder.id,
+                    yearFolder: yearFolder.id,
+                    monthlyNotes: monthlyNotes,
+                    annualSummary: annualSummaryNote?.id || '',
+                    newExpensesNote: '' // Will be set separately
+                };
+                
+                this.yearStructureCache.set(year, { structure, timestamp: Date.now() });
+                console.info(`Pre-warmed year structure cache for ${year} (read-only)`);
+            } else {
+                console.warn(`Year folder ${year} not found during cache pre-warming`);
+            }
+        } catch (error) {
+            console.error(`Failed to pre-warm year structure cache for ${year}:`, error);
+        }
+    }
+
+    /**
+     * Pre-warm monthly document caches for the specified year
+     */
+    private async preWarmMonthlyDocumentCaches(year: string): Promise<void> {
+        try {
+            // Get year structure from cache (should be populated by preWarmYearStructureCache)
+            const cached = this.yearStructureCache.get(year);
+            if (!cached) {
+                console.warn(`Cannot pre-warm monthly caches - year structure for ${year} not cached`);
+                return;
+            }
+            const yearStructure = cached.structure;
+            
+            // Pre-warm cache for all monthly documents
+            const months = getAllMonths();
+            for (const month of months) {
+                const monthName = getMonthName(month);
+                const cacheKey = `${yearStructure.yearFolder}-${monthName}`;
+                
+                // Only query if not already cached
+                const cached = this.noteFindCache.get(cacheKey);
+                if (cached && (Date.now() - cached.timestamp) < this.CACHE_DURATION) {
+                    continue; // Already cached
+                }
+                
+                // Find monthly document  
+                const monthlyNoteId = await findNoteInFolderPaginated(yearStructure.yearFolder, monthName);
+                if (monthlyNoteId) {
+                    this.noteFindCache.set(cacheKey, { noteId: monthlyNoteId, timestamp: Date.now() });
+                }
+            }
+            
+            this.enforceCacheSizeLimits();
+            console.info(`Monthly document caches pre-warmed for ${year}`);
+        } catch (error) {
+            console.error(`Failed to pre-warm monthly document caches for ${year}:`, error);
+        }
+    }
+
+    /**
+     * Pre-warm the recurring-expenses document cache (READ-ONLY)
+     */
+    private async preWarmRecurringExpensesCache(): Promise<void> {
+        try {
+            const settings = this.settingsService.getSettings();
+            const folderName = settings.expensesFolderPath;
+            
+            // Find expenses folder without creating it
+            const folders = await getAllFolders(['id', 'title']);
+            const expensesFolder = folders.find((f: any) => f.title === folderName);
+            
+            if (!expensesFolder) {
+                console.warn('Cannot pre-warm recurring-expenses cache - expenses folder not found');
+                return;
+            }
+            
+            const noteTitle = 'recurring-expenses';
+            const cacheKey = `${expensesFolder.id}-${noteTitle}`;
+            
+            // Only query if not already cached
+            const cached = this.noteFindCache.get(cacheKey);
+            if (cached && (Date.now() - cached.timestamp) < this.CACHE_DURATION) {
+                return; // Already cached
+            }
+            
+            // Find the document (read-only)
+            const notesInFolder = await getAllNotesInFolder(expensesFolder.id, ['id', 'title', 'parent_id']);
+            const recurringExpensesNote = notesInFolder.find((n: any) => n.title === noteTitle);
+            
+            if (recurringExpensesNote) {
+                // Cache the document ID
+                this.noteFindCache.set(cacheKey, { noteId: recurringExpensesNote.id, timestamp: Date.now() });
+                this.enforceCacheSizeLimits();
+                console.info('Pre-warmed recurring-expenses document cache (read-only)');
+            } else {
+                console.info('Recurring-expenses document not found during cache pre-warming (this is normal for older installations)');
+            }
+        } catch (error) {
+            console.error('Failed to pre-warm recurring-expenses cache:', error);
+        }
+    }
+
+    /**
+     * Handle cache invalidation when expenses folder is deleted
+     */
+    async handleExpensesFolderDeletion(): Promise<void> {
+        console.info('Handling expenses folder deletion - invalidating all caches...');
+        
+        // Clear all folder-related caches
+        this.invalidateAllCaches();
+        
+        // Also notify summary service to clear its caches
+        // since it depends on folder structure
+        console.info('Expenses folder deleted - all caches cleared');
+    }
+
+    /**
+     * Check if the expense folder structure is already initialized
+     */
+    async isStructureInitialized(): Promise<boolean> {
+        try {
+            const settings = this.settingsService.getSettings();
+            const folderName = settings.expensesFolderPath;
+            
+            // Check if main expenses folder exists
+            const folders = await getAllFolders(['id', 'title']);
+            const expensesFolder = folders.find((f: any) => f.title === folderName);
+            
+            if (!expensesFolder) {
+                return false;
+            }
+            
+            // Check if current year structure exists
+            const currentYear = getCurrentYear();
+            const yearFolders = await getAllFolders(['id', 'title', 'parent_id']);
+            const yearFolder = yearFolders.find((f: any) => 
+                f.title === currentYear && f.parent_id === expensesFolder.id
+            );
+            
+            if (!yearFolder) {
+                return false;
+            }
+            
+            // Check if new-expenses document exists
+            const notesInFolder = await getAllNotesInFolder(expensesFolder.id, ['id', 'title', 'parent_id']);
+            const newExpensesNote = notesInFolder.find((n: any) => n.title === FOLDER_NAMES.NEW_EXPENSES);
+            const recurringExpensesNote = notesInFolder.find((n: any) => n.title === 'recurring-expenses');
+            
+            // Structure is considered initialized if we have:
+            // 1. Main expenses folder
+            // 2. Current year folder 
+            // 3. new-expenses document
+            // Note: recurring-expenses is optional for backwards compatibility
+            const isInitialized = !!(newExpensesNote);
+            
+            if (isInitialized) {
+                console.info('Found existing folder structure:', {
+                    expensesFolder: expensesFolder.title,
+                    yearFolder: currentYear,
+                    newExpensesNote: !!newExpensesNote,
+                    recurringExpensesNote: !!recurringExpensesNote
+                });
+            }
+            
+            return isInitialized;
+        } catch (error) {
+            console.error('Failed to check structure initialization:', error);
+            return false;
         }
     }
 
@@ -126,8 +545,8 @@ export class FolderService {
                 }
                 
                 // Try to find existing folder
-                const folders = await joplin.data.get(['folders'], { fields: ['id', 'title'] });
-                const existingFolder = folders.items.find((f: any) => f.title === folderName);
+                const folders = await getAllFolders(['id', 'title']);
+                const existingFolder = folders.find((f: any) => f.title === folderName);
                 
                 let folderId: string;
                 if (existingFolder) {
@@ -200,13 +619,10 @@ export class FolderService {
     private async ensureYearFolderExists(parentFolderId: string, year: string): Promise<string> {
         try {
             // Get child folders of expenses folder
-            const childFolders = await joplin.data.get(['folders'], { 
-                fields: ['id', 'title', 'parent_id'],
-                parent_id: parentFolderId 
-            });
+            const allFolders = await getAllFolders(['id', 'title', 'parent_id']);
             
-            // Filter client-side to ensure we only get folders from the correct parent
-            const foldersInParent = childFolders.items.filter((f: any) => f.parent_id === parentFolderId);
+            // Filter to get only folders from the correct parent
+            const foldersInParent = allFolders.filter((f: any) => f.parent_id === parentFolderId);
             const existingYearFolder = foldersInParent.find((f: any) => f.title === year);
             
             if (existingYearFolder) {
@@ -259,15 +675,7 @@ export class FolderService {
         
         try {
             // Check if note already exists
-            // Note: Joplin API parent_id filter may not work correctly, so we filter client-side
-            const notes = await joplin.data.get(['notes'], { 
-                fields: ['id', 'title', 'parent_id'],
-                parent_id: yearFolderId
-            });
-            
-            // Filter client-side to ensure we only get notes from the correct parent folder
-            const notesInFolder = notes.items.filter((n: any) => n.parent_id === yearFolderId);
-            
+            const notesInFolder = await getAllNotesInFolder(yearFolderId, ['id', 'title', 'parent_id']);
             const existingNote = notesInFolder.find((n: any) => n.title === noteTitle);
             
             if (existingNote) {
@@ -323,13 +731,7 @@ export class FolderService {
         
         try {
             // Check if annual summary already exists
-            const notes = await joplin.data.get(['notes'], { 
-                fields: ['id', 'title', 'parent_id'],
-                parent_id: yearFolderId
-            });
-            
-            // Filter client-side to ensure we only get notes from the correct parent folder
-            const notesInFolder = notes.items.filter((n: any) => n.parent_id === yearFolderId);
+            const notesInFolder = await getAllNotesInFolder(yearFolderId, ['id', 'title', 'parent_id']);
             const existingNote = notesInFolder.find((n: any) => n.title === noteTitle);
             
             if (existingNote) {
@@ -373,13 +775,7 @@ export class FolderService {
         const yearFolderId = await this.ensureYearFolderExists(expensesFolderId, year);
         
         // Get all notes in the year folder to create proper links
-        const notes = await joplin.data.get(['notes'], {
-            fields: ['id', 'title', 'parent_id'],
-            parent_id: yearFolderId
-        });
-        
-        // Filter to only notes from the correct parent folder
-        const notesInFolder = notes.items.filter((n: any) => n.parent_id === yearFolderId);
+        const notesInFolder = await getAllNotesInFolder(yearFolderId, ['id', 'title', 'parent_id']);
         
         const monthlyLinks = months.map((month, index) => {
             // Find the note for this month
@@ -412,12 +808,7 @@ ${monthlyLinks}
     async updateAnnualSummaryLinks(yearFolderId: string, year: string): Promise<void> {
         try {
             // Find the annual summary document
-            const notes = await joplin.data.get(['notes'], {
-                fields: ['id', 'title', 'parent_id', 'body'],
-                parent_id: yearFolderId
-            });
-            
-            const notesInFolder = notes.items.filter((n: any) => n.parent_id === yearFolderId);
+            const notesInFolder = await getAllNotesInFolder(yearFolderId, ['id', 'title', 'parent_id', 'body']);
             const annualSummaryNote = notesInFolder.find((n: any) => n.title === year);
             
             if (!annualSummaryNote) {
@@ -465,43 +856,53 @@ ${monthlyLinks}
     async ensureNewExpensesDocumentExists(): Promise<string> {
         const expensesFolderId = await this.ensureExpensesFolderExists();
         const noteTitle = FOLDER_NAMES.NEW_EXPENSES;
+        const cacheKey = `${expensesFolderId}-${noteTitle}`;
         
-        try {
-            // Check if new-expenses document already exists
-            const notes = await joplin.data.get(['notes'], { 
-                fields: ['id', 'title', 'parent_id'],
-                parent_id: expensesFolderId
-            });
-            
-            // Filter client-side to ensure we only get notes from the correct parent folder
-            const notesInFolder = notes.items.filter((n: any) => n.parent_id === expensesFolderId);
-            const existingNote = notesInFolder.find((n: any) => n.title === noteTitle);
-            
-            if (existingNote) {
-                console.info('Found existing new-expenses document');
-                return existingNote.id;
-            }
-            
-            // Create new-expenses document
-            const body = this.generateNewExpensesTemplate();
-            
-            const newNote = await joplin.data.post(['notes'], null, {
-                title: noteTitle,
-                body: body,
-                parent_id: expensesFolderId
-            });
+        return this.withLock(`new-expenses-${expensesFolderId}`, async () => {
+            try {
+                // Check cache first
+                const now = Date.now();
+                const cached = this.noteFindCache.get(cacheKey);
+                if (cached && (now - cached.timestamp) < this.CACHE_DURATION && cached.noteId) {
+                    console.info('Found new-expenses document in cache');
+                    return cached.noteId;
+                }
+                
+                // Check if new-expenses document already exists
+                const notesInFolder = await getAllNotesInFolder(expensesFolderId, ['id', 'title', 'parent_id']);
+                const existingNote = notesInFolder.find((n: any) => n.title === noteTitle);
+                
+                if (existingNote) {
+                    console.info('Found existing new-expenses document');
+                    // Update cache
+                    this.noteFindCache.set(cacheKey, { noteId: existingNote.id, timestamp: Date.now() });
+                    this.enforceCacheSizeLimits();
+                    return existingNote.id;
+                }
+                
+                // Create new-expenses document
+                const body = this.generateNewExpensesTemplate();
+                
+                const newNote = await joplin.data.post(['notes'], null, {
+                    title: noteTitle,
+                    body: body,
+                    parent_id: expensesFolderId
+                });
             
             console.info('Created new-expenses document');
             
-            // Invalidate caches when creating new note
-            this.invalidateExpenseStructureCache();
-            this.invalidateNoteFindCache(expensesFolderId);
+            // Update cache with the new document
+            this.noteFindCache.set(cacheKey, { noteId: newNote.id, timestamp: Date.now() });
             
-            return newNote.id;
-        } catch (error) {
-            console.error('Failed to ensure new-expenses document exists:', error);
-            throw error;
-        }
+            // Invalidate other caches when creating new note
+            this.invalidateExpenseStructureCache();
+            
+                return newNote.id;
+            } catch (error) {
+                console.error('Failed to ensure new-expenses document exists:', error);
+                throw error;
+            }
+        });
     }
 
     /**
@@ -552,15 +953,8 @@ Add your new expenses here. They will be automatically moved to the appropriate 
             return cached.noteId;
         }
         try {
-            const notes = await joplin.data.get(['notes'], { 
-                fields: ['id', 'title', 'parent_id'],
-                parent_id: folderId
-            });
-            
-            // Filter client-side to ensure we only get notes from the correct parent folder
-            const notesInFolder = notes.items.filter((n: any) => n.parent_id === folderId);
-            const note = notesInFolder.find((n: any) => n.title === title);
-            const noteId = note ? note.id : null;
+            // Use the paginated version that stops searching once found
+            const noteId = await findNoteInFolderPaginated(folderId, title);
             
             // Cache the result
             this.noteFindCache.set(cacheKey, { noteId, timestamp: Date.now() });
@@ -589,33 +983,20 @@ Add your new expenses here. They will be automatically moved to the appropriate 
             const expensesFolderId = await this.ensureExpensesFolderExists();
             
             // Get all child folders (years)
-            const yearFolders = await joplin.data.get(['folders'], { 
-                fields: ['id', 'title', 'parent_id'],
-                parent_id: expensesFolderId 
-            });
+            const allFolders = await getAllFolders(['id', 'title', 'parent_id']);
             
             // Filter client-side to ensure we only get folders from the correct parent
-            const validYearFolders = yearFolders.items.filter((f: any) => f.parent_id === expensesFolderId);
+            const validYearFolders = allFolders.filter((f: any) => f.parent_id === expensesFolderId);
             
             const allNotes = [];
             
             // Get all notes in expense folders
-            const expenseNotes = await joplin.data.get(['notes'], { 
-                fields: ['id', 'title', 'parent_id'],
-                parent_id: expensesFolderId
-            });
-            // Filter client-side to ensure we only get notes from the correct parent folder
-            const validExpenseNotes = expenseNotes.items.filter((n: any) => n.parent_id === expensesFolderId);
+            const validExpenseNotes = await getAllNotesInFolder(expensesFolderId, ['id', 'title', 'parent_id']);
             allNotes.push(...validExpenseNotes);
             
             // Get all notes in year folders
             for (const yearFolder of validYearFolders) {
-                const yearNotes = await joplin.data.get(['notes'], { 
-                    fields: ['id', 'title', 'parent_id'],
-                    parent_id: yearFolder.id
-                });
-                // Filter client-side to ensure we only get notes from the correct parent folder
-                const validYearNotes = yearNotes.items.filter((n: any) => n.parent_id === yearFolder.id);
+                const validYearNotes = await getAllNotesInFolder(yearFolder.id, ['id', 'title', 'parent_id']);
                 allNotes.push(...validYearNotes);
             }
             
@@ -643,15 +1024,10 @@ Add your new expenses here. They will be automatically moved to the appropriate 
         const expensesFolderId = await this.ensureExpensesFolderExists();
         const noteTitle = 'recurring-expenses';
         
-        try {
+        return this.withLock(`recurring-expenses-${expensesFolderId}`, async () => {
+            try {
             // Check if recurring-expenses document already exists
-            const notes = await joplin.data.get(['notes'], { 
-                fields: ['id', 'title', 'parent_id'],
-                parent_id: expensesFolderId
-            });
-            
-            // Filter client-side to ensure we only get notes from the correct parent folder
-            const notesInFolder = notes.items.filter((n: any) => n.parent_id === expensesFolderId);
+            const notesInFolder = await getAllNotesInFolder(expensesFolderId, ['id', 'title', 'parent_id']);
             const existingNote = notesInFolder.find((n: any) => n.title === noteTitle);
             
             if (existingNote) {
@@ -674,11 +1050,12 @@ Add your new expenses here. They will be automatically moved to the appropriate 
             this.invalidateExpenseStructureCache();
             this.invalidateNoteFindCache(expensesFolderId);
             
-            return newNote.id;
-        } catch (error) {
-            console.error('Failed to ensure recurring-expenses document exists:', error);
-            throw error;
-        }
+                return newNote.id;
+            } catch (error) {
+                console.error('Failed to ensure recurring-expenses document exists:', error);
+                throw error;
+            }
+        });
     }
 
     /**
