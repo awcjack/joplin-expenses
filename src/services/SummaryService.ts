@@ -779,9 +779,9 @@ export class SummaryService {
                 
                 // Show date range
                 if (expenses.length > 0) {
-                    const sortedExpenses = expenses.sort((a, b) => a.date.localeCompare(b.date));
-                    const firstDate = sortedExpenses[0].date.slice(0, 10);
-                    const lastDate = sortedExpenses[sortedExpenses.length - 1].date.slice(0, 10);
+                    const sortedExpenses = expenses.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+                    const firstDate = (sortedExpenses[0].date || '').slice(0, 10);
+                    const lastDate = (sortedExpenses[sortedExpenses.length - 1].date || '').slice(0, 10);
                     content += `- **Date Range:** ${firstDate} to ${lastDate}\n`;
                 }
                 
@@ -805,9 +805,9 @@ export class SummaryService {
                 content += `**Entries:**\n\n`;
                 content += `| Date | Description | Amount | Shop |\n`;
                 content += `|------|-------------|--------|------|\n`;
-                
+
                 for (const expense of expenses) {
-                    const date = expense.date.slice(0, 10); // YYYY-MM-DD
+                    const date = (expense.date || '').slice(0, 10); // YYYY-MM-DD
                     const amount = expense.price >= 0 ? 
                         `${currency}${expense.price.toFixed(2)}` : 
                         `+${currency}${Math.abs(expense.price).toFixed(2)}`;
@@ -868,7 +868,6 @@ export class SummaryService {
                 startMarker,
                 newSummary,
                 endMarker,
-                '',
                 ...newLines.slice(titleEndIndex)
             ].join('\n');
         } else {
@@ -965,10 +964,10 @@ export class SummaryService {
         chart += '    bar [';
         chart += expenseCategories.map(([,amount]) => amount.toFixed(2)).join(', ');
         chart += ']\n';
-        chart += '```\n\n';
+        chart += '```\n';
 
         // Add data labels table for exact values since mermaid xychart-beta doesn't support data labels directly
-        chart += '**Category Details:**\n\n';
+        chart += '\n**Category Details:**\n\n';
         chart += '| Category | Amount |\n';
         chart += '|----------|--------|\n';
         for (const [cat, amount] of expenseCategories) {
@@ -1023,10 +1022,10 @@ export class SummaryService {
         chart += '    bar [';
         chart += sortedData.map(data => data.amount.toFixed(2)).join(', ');
         chart += ']\n';
-        chart += '```\n\n';
+        chart += '```\n';
 
         // Add data labels table for exact values
-        chart += '**Monthly Details:**\n\n';
+        chart += '\n**Monthly Details:**\n\n';
         chart += '| Month | Expense Amount |\n';
         chart += '|-------|----------------|\n';
         for (const data of sortedData) {

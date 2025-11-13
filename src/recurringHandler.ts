@@ -335,10 +335,34 @@ export class RecurringExpenseHandler {
                             };
                             
                             console.log('🔄 PROCESS: Final nextDue calculated:', updatedRecurring.nextDue);
-                            
-                            await this.updateRecurringExpense(updatedRecurring);
-                            
-                            logger.info(`Successfully processed ${successCount} expenses and updated recurring entry: ${recurringEntry.description}`);
+
+                            // Critical: Update recurring expense with retry logic
+                            // This prevents nextDue from getting out of sync if the update fails
+                            let updateSuccess = false;
+                            let updateAttempts = 0;
+                            const maxUpdateAttempts = 3;
+
+                            while (!updateSuccess && updateAttempts < maxUpdateAttempts) {
+                                try {
+                                    updateAttempts++;
+                                    await this.updateRecurringExpense(updatedRecurring);
+                                    updateSuccess = true;
+                                    logger.info(`Successfully processed ${successCount} expenses and updated recurring entry: ${recurringEntry.description}`);
+                                } catch (updateError) {
+                                    logger.error(`Failed to update recurring expense (attempt ${updateAttempts}/${maxUpdateAttempts}):`, updateError);
+
+                                    if (updateAttempts < maxUpdateAttempts) {
+                                        // Wait briefly before retrying (exponential backoff: 100ms, 200ms)
+                                        await new Promise(resolve => setTimeout(resolve, 100 * updateAttempts));
+                                    } else {
+                                        // Final attempt failed - log critical error
+                                        // The deduplication logic will prevent actual duplicates on next run
+                                        const criticalError = `CRITICAL: Created ${successCount} expenses but failed to update nextDue for "${recurringEntry.description}". Deduplication will prevent duplicates on next run.`;
+                                        logger.error(criticalError);
+                                        result.errors.push(criticalError);
+                                    }
+                                }
+                            }
                         }
                         
                         result.processed++;
