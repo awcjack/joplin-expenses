@@ -33,6 +33,11 @@ export class RecurringExpenseHandler {
     private settingsService: SettingsService;
     private summaryService: SummaryService;
 
+    // Re-entrancy guards to prevent infinite loops
+    // When true, prevents recursive calls during ongoing operations
+    private isProcessingRecurring: boolean = false;
+    private isUpdatingDocument: boolean = false;
+
     private constructor() {
         this.folderService = FolderService.getInstance();
         this.settingsService = SettingsService.getInstance();
@@ -211,6 +216,13 @@ export class RecurringExpenseHandler {
             newExpenses: []
         };
 
+        // Re-entrancy guard: skip if already processing
+        if (this.isProcessingRecurring) {
+            logger.info('Recurring expense processing already in progress, skipping...');
+            return result;
+        }
+
+        this.isProcessingRecurring = true;
         try {
             logger.info('Starting recurring expense processing...');
 
@@ -386,6 +398,9 @@ export class RecurringExpenseHandler {
             logger.error('Failed to process recurring expenses', error);
             result.errors.push(`Processing failed: ${safeErrorMessage(error)}`);
             return result;
+        } finally {
+            // Always reset the processing flag
+            this.isProcessingRecurring = false;
         }
     }
 
@@ -519,13 +534,28 @@ export class RecurringExpenseHandler {
             }
             
             console.log('🔄 UPDATE: About to save document with updated body length:', updatedBody.length);
-            await joplin.data.put(['notes', recurringNoteId], null, { body: updatedBody });
-            console.log('🔄 UPDATE: Document saved successfully');
-            
+
+            // Set guard flag before saving to prevent onNoteChange from triggering more processing
+            this.isUpdatingDocument = true;
+            try {
+                await joplin.data.put(['notes', recurringNoteId], null, { body: updatedBody });
+                console.log('🔄 UPDATE: Document saved successfully');
+            } finally {
+                this.isUpdatingDocument = false;
+            }
+
         } catch (error) {
             logger.error('Failed to update recurring expense', error);
             throw error;
         }
+    }
+
+    /**
+     * Check if the handler is currently updating a document
+     * This can be used by other services to avoid triggering recursive processing
+     */
+    isUpdating(): boolean {
+        return this.isUpdatingDocument || this.isProcessingRecurring;
     }
 
     /**
