@@ -1,0 +1,129 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags like v1.0.0, v1.2.3
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+  build:
+    name: Build Plugin
+    runs-on: ubuntu-latest
+    needs: test
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      plugin_file: ${{ steps.build.outputs.plugin_file }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Extract version from tag
+        id: version
+        env:
+          GIT_REF: ${{ github.ref }}
+        run: |
+          # Extract version from refs/tags/v1.0.0 -> 1.0.0
+          VERSION="${GIT_REF#refs/tags/v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Update manifest version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Update version in manifest.json to match the tag
+          jq --arg version "$VERSION" '.version = $version' src/manifest.json > tmp.json
+          mv tmp.json src/manifest.json
+
+      - name: Build plugin
+        id: build
+        run: |
+          npm run dist
+          PLUGIN_FILE=$(ls publish/*.jpl | head -1)
+          echo "plugin_file=$(basename "$PLUGIN_FILE")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: joplin-plugin
+          path: publish/*.jpl
+          retention-days: 5
+
+      - name: Upload manifest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: manifest
+          path: dist/manifest.json
+          retention-days: 5
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download plugin artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: joplin-plugin
+          path: ./release
+
+      - name: Download manifest artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: manifest
+          path: ./release
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "v${{ needs.build.outputs.version }}"
+          body: |
+            ## Joplin Money Tracker Plugin v${{ needs.build.outputs.version }}
+
+            ### Installation
+            1. Download the `.jpl` file below
+            2. In Joplin, go to **Tools > Options > Plugins**
+            3. Click the gear icon and select "Install from file"
+            4. Select the downloaded `.jpl` file
+
+            ### What's Changed
+            See commit history for detailed changes.
+          files: |
+            ./release/*.jpl
+            ./release/manifest.json
+          draft: false
+          prerelease: ${{ contains(github.ref, '-alpha') || contains(github.ref, '-beta') || contains(github.ref, '-rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
