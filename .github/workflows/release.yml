@@ -16,7 +16,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '20'
           cache: 'npm'
 
       - name: Install dependencies
@@ -53,19 +53,53 @@ jobs:
           # Extract version from refs/tags/v1.0.0 -> 1.0.0
           VERSION="${GIT_REF#refs/tags/v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Extracted version: $VERSION"
 
       - name: Update manifest version
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
+          echo "Updating manifest.json version to: $VERSION"
+          echo "Before update:"
+          cat src/manifest.json
+
           # Update version in manifest.json to match the tag
           jq --arg version "$VERSION" '.version = $version' src/manifest.json > tmp.json
           mv tmp.json src/manifest.json
 
+          echo "After update:"
+          cat src/manifest.json
+
+          # Verify the version was updated correctly
+          MANIFEST_VERSION=$(jq -r '.version' src/manifest.json)
+          if [ "$MANIFEST_VERSION" != "$VERSION" ]; then
+            echo "ERROR: Manifest version ($MANIFEST_VERSION) does not match tag version ($VERSION)"
+            exit 1
+          fi
+          echo "✓ Manifest version updated successfully to $VERSION"
+
       - name: Build plugin
         id: build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           npm run dist
+
+          # List built files
+          echo "Built files in dist/:"
+          ls -la dist/
+
+          echo "Built files in publish/:"
+          ls -la publish/
+
+          # Verify dist/manifest.json has correct version
+          DIST_VERSION=$(jq -r '.version' dist/manifest.json)
+          if [ "$DIST_VERSION" != "$VERSION" ]; then
+            echo "ERROR: dist/manifest.json version ($DIST_VERSION) does not match tag version ($VERSION)"
+            exit 1
+          fi
+          echo "✓ dist/manifest.json version verified: $DIST_VERSION"
+
           PLUGIN_FILE=$(ls publish/*.jpl | head -1)
           echo "plugin_file=$(basename "$PLUGIN_FILE")" >> "$GITHUB_OUTPUT"
 
