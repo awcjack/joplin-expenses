@@ -25,6 +25,10 @@ export class SummaryService {
     private readonly MEMORY_CLEANUP_INTERVAL = 600000; // 10 minutes cleanup interval
     private memoryCleanupTimer: NodeJS.Timeout | null = null;
 
+    // Re-entrancy guard to prevent infinite loops when updating summaries
+    // When true, onNoteSaved will skip processing to avoid triggering another update cycle
+    private isUpdatingSummaries: boolean = false;
+
     /**
      * Sanitize text for Mermaid chart usage to prevent injection attacks
      */
@@ -399,10 +403,20 @@ export class SummaryService {
 
             // Update the note if content changed
             if (updatedContent !== note.body) {
-                await joplin.data.put(['notes', noteId], null, { body: updatedContent });
-                console.info(`Updated ${markers.length} summary markers in note ${noteId}`);
+                // Set re-entrancy guard to prevent infinite loops
+                // The joplin.data.put call triggers onNoteChange which would call onNoteSaved
+                this.isUpdatingSummaries = true;
+                try {
+                    await joplin.data.put(['notes', noteId], null, { body: updatedContent });
+                    console.info(`Updated ${markers.length} summary markers in note ${noteId}`);
+                } finally {
+                    // Always reset the flag, even if the update fails
+                    this.isUpdatingSummaries = false;
+                }
             }
         } catch (error) {
+            // Ensure flag is reset on any error
+            this.isUpdatingSummaries = false;
             console.error(`Failed to process document summaries for note ${noteId}:`, error);
         }
     }
@@ -863,6 +877,8 @@ export class SummaryService {
 
             // Insert new summary after title
             const newLines = contentWithoutOldSummary.split('\n');
+            console.log("newLines.slice(0, titleEndIndex)", newLines.slice(0, titleEndIndex));
+            console.log("newLines.slice(titleEndIndex)", newLines.slice(titleEndIndex));
             return [
                 ...newLines.slice(0, titleEndIndex),
                 startMarker,
@@ -908,6 +924,13 @@ export class SummaryService {
      * Update summaries when note is saved
      */
     async onNoteSaved(noteId: string): Promise<void> {
+        // Skip processing if we're currently updating summaries (re-entrancy guard)
+        // This prevents infinite loops when our own programmatic updates trigger onNoteChange
+        if (this.isUpdatingSummaries) {
+            console.info(`Skipping summary processing for note ${noteId} - update in progress`);
+            return;
+        }
+
         try {
             // Check if this is an expense-related note
             const note = await joplin.data.get(['notes', noteId], { fields: ['parent_id', 'title'] });

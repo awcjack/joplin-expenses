@@ -210,37 +210,8 @@ export class ExpenseService {
             date: expense.date || getCurrentDateTime()
         }));
 
-        // Deduplicate expenses before adding
-        // Check if an expense with same description, category, price, and date (same day) already exists
-        const deduplicatedExpenses = expensesWithDates.filter(newExpense => {
-            const newExpenseDate = (newExpense.date || '').slice(0, 10); // Get YYYY-MM-DD
-
-            const isDuplicate = existingExpenses.some(existingExpense => {
-                const existingExpenseDate = (existingExpense.date || '').slice(0, 10); // Get YYYY-MM-DD
-
-                return (
-                    existingExpense.description === newExpense.description &&
-                    existingExpense.category === newExpense.category &&
-                    Math.abs(existingExpense.price - newExpense.price) < 0.01 && // Handle floating point precision
-                    existingExpenseDate === newExpenseDate
-                );
-            });
-
-            if (isDuplicate) {
-                logger.warn(`Skipping duplicate expense: ${newExpense.description} on ${newExpenseDate}`);
-            }
-
-            return !isDuplicate;
-        });
-
-        // Add deduplicated expenses
-        existingExpenses.push(...deduplicatedExpenses);
-
-        // Log deduplication results
-        const duplicatesSkipped = expensesWithDates.length - deduplicatedExpenses.length;
-        if (duplicatesSkipped > 0) {
-            logger.info(`Skipped ${duplicatesSkipped} duplicate expense(s) for ${yearMonth}`);
-        }
+        // Add new expenses
+        existingExpenses.push(...expensesWithDates);
         
         // Update the monthly document
         const updatedBody = this.updateExpenseTableInContent(monthlyNote.body, existingExpenses);
