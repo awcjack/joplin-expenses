@@ -3,28 +3,9 @@
  * These tests focus on the command functions and their integration with services
  */
 
-// Mock joplin API
-const mockJoplin = {
-    data: {
-        get: jest.fn(),
-        put: jest.fn()
-    },
-    views: {
-        dialogs: {
-            create: jest.fn(),
-            setHtml: jest.fn(),
-            setButtons: jest.fn(),
-            open: jest.fn(),
-            showMessageBox: jest.fn()
-        }
-    },
-    workspace: {
-        selectedNote: jest.fn()
-    },
-    commands: {
-        execute: jest.fn()
-    }
-};
+// Use the global mockJoplin from tests/setup.ts
+// Accessing via global avoids redeclaration errors with the setup file
+const commandsMockJoplin = (global as any).mockJoplin;
 
 // Mock services
 const mockSettingsService = {
@@ -69,7 +50,7 @@ const mockRecurringHandler = {
 };
 
 // Mock global joplin
-(global as any).joplin = mockJoplin;
+(global as any).joplin = commandsMockJoplin;
 
 // Mock all service imports
 jest.mock('../../src/services/SettingsService', () => ({
@@ -147,8 +128,8 @@ describe('Command Functions Integration Tests', () => {
             defaultCurrency: '$'
         });
         
-        mockJoplin.views.dialogs.create.mockResolvedValue('dialog-id');
-        mockJoplin.views.dialogs.open.mockResolvedValue({ id: 'cancel' });
+        commandsMockJoplin.views.dialogs.create.mockResolvedValue('dialog-id');
+        commandsMockJoplin.views.dialogs.open.mockResolvedValue({ id: 'cancel' });
     });
 
     describe('addNewExpense workflow', () => {
@@ -180,7 +161,7 @@ describe('Command Functions Integration Tests', () => {
                 errors: []
             });
 
-            mockJoplin.views.dialogs.open.mockResolvedValue({
+            commandsMockJoplin.views.dialogs.open.mockResolvedValue({
                 id: 'ok',
                 formData: {
                     'quick-expense-form': {
@@ -264,14 +245,14 @@ describe('Command Functions Integration Tests', () => {
         it('should handle editing expense table for valid expense note', async () => {
             const testNote = { id: 'test-note-id', title: 'Test Note' };
             
-            mockJoplin.workspace.selectedNote.mockResolvedValue(testNote);
+            commandsMockJoplin.workspace.selectedNote.mockResolvedValue(testNote);
             mockFolderService.getAllExpenseStructure.mockResolvedValue({
                 folders: [],
                 notes: [{ id: 'test-note-id' }]
             });
 
             // Simulate the workflow
-            const note = await mockJoplin.workspace.selectedNote();
+            const note = await commandsMockJoplin.workspace.selectedNote();
             if (note) {
                 const structure = await mockFolderService.getAllExpenseStructure();
                 const isExpenseNote = structure.notes.some(n => n.id === note.id);
@@ -287,14 +268,14 @@ describe('Command Functions Integration Tests', () => {
         it('should reject editing non-expense notes', async () => {
             const testNote = { id: 'non-expense-note-id', title: 'Regular Note' };
             
-            mockJoplin.workspace.selectedNote.mockResolvedValue(testNote);
+            commandsMockJoplin.workspace.selectedNote.mockResolvedValue(testNote);
             mockFolderService.getAllExpenseStructure.mockResolvedValue({
                 folders: [],
                 notes: [{ id: 'other-note-id' }] // Note not in expense structure
             });
 
             // Simulate the workflow
-            const note = await mockJoplin.workspace.selectedNote();
+            const note = await commandsMockJoplin.workspace.selectedNote();
             if (note) {
                 const structure = await mockFolderService.getAllExpenseStructure();
                 const isExpenseNote = structure.notes.some(n => n.id === note.id);
@@ -450,9 +431,9 @@ describe('Command Functions Integration Tests', () => {
         });
 
         it('should handle dialog creation errors', async () => {
-            mockJoplin.views.dialogs.create.mockRejectedValue(new Error('Dialog creation failed'));
+            commandsMockJoplin.views.dialogs.create.mockRejectedValue(new Error('Dialog creation failed'));
 
-            await expect(mockJoplin.views.dialogs.create('test-dialog')).rejects.toThrow('Dialog creation failed');
+            await expect(commandsMockJoplin.views.dialogs.create('test-dialog')).rejects.toThrow('Dialog creation failed');
         });
     });
 
@@ -505,7 +486,7 @@ describe('Auto-processing workflows', () => {
             const noteTitle = 'new-expenses';
             
             mockFolderService.ensureNewExpensesDocumentExists.mockResolvedValue(noteId);
-            mockJoplin.data.get.mockResolvedValue({ body: 'Table with expenses' });
+            commandsMockJoplin.data.get.mockResolvedValue({ body: 'Table with expenses' });
             
             const mockParseExpenseTables = require('../../src/expenseParser').parseExpenseTables;
             mockParseExpenseTables.mockReturnValue([{ description: 'Test expense' }]);
@@ -523,7 +504,7 @@ describe('Auto-processing workflows', () => {
                 (noteTitle && noteTitle.toLowerCase() === 'new-expenses');
             
             if (isNewExpensesDocument) {
-                const note = await mockJoplin.data.get(['notes', noteId], { fields: ['body'] });
+                const note = await commandsMockJoplin.data.get(['notes', noteId], { fields: ['body'] });
                 const expenses = mockParseExpenseTables(note.body);
                 
                 if (expenses.length > 0) {
