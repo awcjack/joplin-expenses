@@ -209,7 +209,7 @@ export class ExpenseService {
             ...expense,
             date: expense.date || getCurrentDateTime()
         }));
-        
+
         // Add new expenses
         existingExpenses.push(...expensesWithDates);
         
