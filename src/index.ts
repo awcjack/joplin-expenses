@@ -228,11 +228,18 @@ async function registerEventHandlers() {
 	// Auto-process summaries and detect new expenses when notes are saved
 	await joplin.workspace.onNoteChange(async () => {
 		try {
+			// Skip processing if recurring handler is currently updating a document
+			// This prevents infinite loops when programmatic updates trigger onNoteChange
+			if (recurringHandler.isUpdating()) {
+				console.info('Skipping note change processing - recurring handler update in progress');
+				return;
+			}
+
 			const note = await joplin.workspace.selectedNote();
 			if (note && settingsService.getSettings().autoProcessing) {
 				// Process summaries
 				await summaryService.onNoteSaved(note.id);
-				
+
 				// Check if this is the new-expenses document and auto-process expenses
 				if (settingsService.getSettings().autoProcessNewExpenses) {
 					await autoProcessNewExpensesIfNeeded(note.id, note.title);
